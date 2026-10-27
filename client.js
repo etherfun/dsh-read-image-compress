@@ -60,6 +60,8 @@ window.__ModuleLoader__.load({
         cacheEntries: 'In-memory cache entries',
         downscaleWebp: 'Downscale WebP results',
         skipGif: 'Skip GIF images',
+        saveHint: 'Changes apply to the next read_image call; the expanded image ends with the original/compressed footer.',
+        footerExample: 'Example: Original: 3200×2000 · 2.05 MB · PNG | Compressed: 1568×980 · 43.9 KB · JPEG | Ratio: 47.9× (bytes ↓97.9%, long edge 49%)',
         sectionSummary: 'Result footer',
         summaryMode: 'Footer detail',
         summaryDetailed: 'Detailed — original, compressed, ratio',
@@ -101,6 +103,8 @@ window.__ModuleLoader__.load({
         cacheEntries: '内存缓存条数',
         downscaleWebp: '允许缩小 WebP',
         skipGif: '跳过 GIF',
+        saveHint: '修改在下一次 read_image 时生效；展开图片底部会显示原图与压缩后的对比。',
+        footerExample: '示例：原图: 3200×2000 · 2.05 MB · PNG | 压缩后: 1568×980 · 43.9 KB · JPEG | 压缩比: 47.9×（体积 ↓97.9%，长边 49%）',
         sectionSummary: '结果描述',
         summaryMode: '底部描述',
         summaryDetailed: '详细 —— 原图、压缩后、压缩比',
@@ -173,6 +177,17 @@ window.__ModuleLoader__.load({
       error: { color: 'var(--dsw-alias-danger, #d1242f)', marginTop: '8px' },
       notice: { color: 'var(--dsw-alias-label-secondary, #6b7280)', marginTop: '8px' },
       dirty: { color: 'var(--dsw-alias-warning, #9a6700)', marginTop: '8px' },
+      example: {
+        margin: '0 0 16px',
+        padding: '8px 10px',
+        borderRadius: '6px',
+        background: 'var(--dsw-alias-bg-layer-2, #f6f8fa)',
+        color: 'var(--dsw-alias-label-secondary, #6b7280)',
+        fontFamily: 'var(--ds-font-family-code, ui-monospace, monospace)',
+        fontSize: '11.5px',
+        lineHeight: 1.5,
+        overflowX: 'auto',
+      },
     }
 
     function merge(value) {
@@ -255,7 +270,8 @@ window.__ModuleLoader__.load({
         h('div', { style: styles.grid }, rows))
 
       return h('div', { style: styles.root },
-        h('p', { style: styles.hint }, t('description')),
+        h('p', { style: styles.hint }, t('saveHint')),
+        h('p', { style: styles.example }, t('footerExample')),
 
         section(t('sectionQuick'), [
           h(Field, { key: 'enabled', id: 'ric-enabled', label: t('enabled') },
