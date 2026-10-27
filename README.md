@@ -45,9 +45,11 @@ the model knows the original raster when it reasons about coordinates.
 
 ## Settings
 
-Open **Plugins** in the sidebar, open the `@local/dsh-read-image-compress`
-bundle, and use **Configure** on its `read-image-compress` row. The same fields
-are valid in `cordis.patch.yml`:
+Open **Plugins** in the sidebar and click the `@local/dsh-read-image-compress`
+bundle. The settings card sits directly under the package description — no
+second-level **Configure** page — and saves as one atomic mutation; the next
+`read_image` call uses the new values. The same fields are valid in
+`cordis.patch.yml`:
 
 ```yaml
 - id: read-image-compress
@@ -117,7 +119,7 @@ plugin on the next `read_image` call without a reload.
 
 ```text
 index.js            host half: tools/post-execute hook, Sharp encoder, footer
-client.js           browser half: Plugins row configuration page
+client.js           browser half: bundle-page settings card (plugins.bundle.config)
 cordis.patch.yml    bundle insert row and default config
 locale/{en,zh}.json bundle metadata strings
 docs/design.md      architecture, contracts, and the hook rationale

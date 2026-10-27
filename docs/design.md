@@ -536,3 +536,52 @@ F:\dev\github\dsh-read-image-compress
 ```
 
 profile 依赖改为 `link:F:/dev/github/dsh-read-image-compress`，`node_modules/@local/dsh-read-image-compress` junction 指向新目录。运行中的 Host 仍持有旧路径的模块实例，重新组合后（重启 DSH 或在 Plugins 页触发一次重载）才会加载新代码。
+
+## 13. 设置入口挪到 bundle 页（2026-10-28）
+
+### 13.1 原来的位置为什么是“二级界面”
+
+DSH 插件页的结构：
+
+- `Plugins` 列表 → 点 bundle → bundle 页（图标、标题、一行简介、`plugins.bundle.config` 区、组件行列表、来源）。
+- 组件行右侧的箭头 → 行配置页（`plugins.row.config`，`view: 'page'`），再里面才是表单。
+
+我们的 v0.2/v0.3 把表单注册在 `plugins.row.config`，所以必须点两次才看到设置。
+
+### 13.2 改成 `plugins.bundle.config`
+
+参考本地安装的 `@moguiyu/dsh-tavily`：它只注册 `plugins.bundle.config`（key 为包名），bundle 页在简介下方直接渲染设置卡片。
+
+`plugins.bundle.config` 的渲染点是 `PackageDetail`：
+
+```js
+configured ? section(renderSlot("plugins.bundle.config", { view: "page" }, { entryKey: pkg.name })) : null
+```
+
+`configured` 来自 `ledger.bundles.has(pkg.name)`，而 ledger 是槽位注册表的投影，所以只要注册 key 等于包名，区块就出现，不需要行级配置页。
+
+### 13.3 表单从哪来
+
+bundle 槽位不传 `form`（行配置页才传），但客户端服务 `ctx.configForms` 暴露同一份文档：
+
+```js
+const form = ctx.configForms.get('read-image-compress')   // 行 id = 设置命名空间
+form.getSnapshot()   // { status, value, base, user, revision, writable }
+form.subscribe(fn)
+form.mutate([{ op: 'set', path: [key], value }], revision)
+```
+
+这与插件页内部 `formFor(id)` 用的是同一个控制器实例，所以：
+
+- 同一命名空间只有一个写队列，bundle 卡片和行页面不会互相覆盖；
+- 写作携带 revision 栅栏，冲突时宿主拒绝并触发恢复读；
+- 客户端仍先做一次 schema 校验，宿主再做完整校验。
+
+卡片用 `ctx.configForms.whileServed(['read-image-compress'], register)` 注册，命名空间不被服务时整张卡片消失，不会留空壳。
+
+### 13.4 变更
+
+- 注册槽位：`plugins.bundle.config`，`key/id = @local/dsh-read-image-compress`；
+- 移除 `plugins.row.config` 注册（行右侧箭头随之消失，设置只有一处）；
+- 字段分「常用设置」（启用、质量、格式、缩放、描述、描述语言）与「高级设置」（长边、字节目标、跳过阈值、最小缩放、缓存、WebP、GIF）；
+- 组件改为直接订阅 form 快照，保存仍是整表一次原子 mutate。

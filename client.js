@@ -1,10 +1,11 @@
 /**
- * Browser half of the read-image-compress bundle: the row configuration page.
+ * Browser half of the read-image-compress bundle.
  *
- * The Plugins page owns the form state and passes `{ state, mutate }`; this
- * component stages values locally, then writes them through one atomic
- * mutation. It deliberately uses plain React controls so it does not depend on
- * the host's private UI primitives.
+ * The settings live on the bundle page itself (`plugins.bundle.config`), right
+ * under the package description, instead of behind the row's Configure page.
+ * The card binds the row's Host settings namespace through `ctx.configForms`,
+ * so it reads and writes the same document the row form used to, and keeps the
+ * staged-draft + revise-fenced save behaviour.
  */
 
 window.__ModuleLoader__.load({
@@ -14,6 +15,9 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'readImageCompress'
+    const SETTINGS_NAMESPACE = 'read-image-compress'
+    const BUNDLE = '@local/dsh-read-image-compress'
+
     const DEFAULTS = Object.freeze({
       enabled: true,
       quality: 85,
@@ -37,10 +41,8 @@ window.__ModuleLoader__.load({
         title: 'Read image compression',
         summary: 'Compress read_image results before the session stores them.',
         description: 'Downscale and re-encode images read by read_image.',
-        sectionCompression: 'Compression',
-        sectionResolution: 'Resolution',
-        sectionFormat: 'Format',
-        sectionBehaviour: 'Behaviour',
+        sectionQuick: 'Everyday settings',
+        sectionAdvanced: 'Advanced',
         enabled: 'Enable compression',
         quality: 'Quality (1–100)',
         resolutionScale: 'Resolution scale (0.1–1)',
@@ -69,9 +71,9 @@ window.__ModuleLoader__.load({
         save: 'Save',
         saving: 'Saving…',
         discard: 'Discard',
-        saved: 'Saved',
+        saved: 'Saved — the next read_image call uses these settings',
         saveFailed: 'Could not save the settings',
-        unavailable: 'Configuration is not available for this row.',
+        unavailable: 'The Host does not expose this configuration right now.',
         loading: 'Loading configuration…',
         readOnly: 'This configuration is read-only.',
         dirty: 'Unsaved changes',
@@ -80,10 +82,8 @@ window.__ModuleLoader__.load({
         title: '读图压缩',
         summary: '在会话保存前压缩 read_image 的结果。',
         description: '对 read_image 读取的图片降尺寸并重新编码。',
-        sectionCompression: '压缩',
-        sectionResolution: '分辨率',
-        sectionFormat: '格式',
-        sectionBehaviour: '行为',
+        sectionQuick: '常用设置',
+        sectionAdvanced: '高级设置',
         enabled: '启用压缩',
         quality: '质量（1–100）',
         resolutionScale: '分辨率缩放（0.1–1）',
@@ -112,9 +112,9 @@ window.__ModuleLoader__.load({
         save: '保存',
         saving: '保存中…',
         discard: '放弃修改',
-        saved: '已保存',
+        saved: '已保存 —— 下一次 read_image 生效',
         saveFailed: '设置保存失败',
-        unavailable: '当前行没有可用的配置。',
+        unavailable: '宿主当前没有提供这个配置。',
         loading: '正在读取配置…',
         readOnly: '此配置为只读。',
         dirty: '有未保存的修改',
@@ -122,7 +122,8 @@ window.__ModuleLoader__.load({
     }
 
     const styles = {
-      root: { maxWidth: '760px', color: 'var(--dsw-alias-label-primary, #1f2328)', fontSize: '13px' },
+      root: { color: 'var(--dsw-alias-label-primary, #1f2328)', fontSize: '13px' },
+      hint: { color: 'var(--dsw-alias-label-secondary, #6b7280)', fontSize: '12px', margin: '0 0 14px' },
       section: { margin: '0 0 18px' },
       heading: {
         margin: '0 0 10px',
@@ -133,12 +134,11 @@ window.__ModuleLoader__.load({
       },
       grid: {
         display: 'grid',
-        gridTemplateColumns: 'minmax(160px, 220px) minmax(0, 1fr)',
+        gridTemplateColumns: 'minmax(150px, 210px) minmax(0, 1fr)',
         gap: '9px 16px',
         alignItems: 'center',
       },
       label: { color: 'var(--dsw-alias-label-primary, #1f2328)' },
-      hint: { color: 'var(--dsw-alias-label-secondary, #6b7280)', fontSize: '12px', marginTop: '6px' },
       input: {
         boxSizing: 'border-box',
         width: '100%',
@@ -196,26 +196,27 @@ window.__ModuleLoader__.load({
 
     function SettingsCard(props) {
       const { t, view, form } = props
-      const state = form?.state
-      const [draft, setDraft] = React.useState(() => merge(state?.value))
+      const [snapshot, setSnapshot] = React.useState(() => form.getSnapshot())
+      const [draft, setDraft] = React.useState(() => merge(form.getSnapshot().value))
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState('')
       const [notice, setNotice] = React.useState('')
 
+      React.useEffect(() => form.subscribe(() => setSnapshot(form.getSnapshot())), [form])
       React.useEffect(() => {
-        setDraft(merge(state?.value))
+        setDraft(merge(form.getSnapshot().value))
         setError('')
         setNotice('')
-      }, [state?.revision, state?.value])
+      }, [form, snapshot.revision])
 
       if (view === 'summary') return h('span', null, t('summary'))
-      if (!state || state.status === 'loading') {
+      if (snapshot.status === 'loading') {
         return h('p', { style: styles.hint }, t('loading'))
       }
-      if (state.status === 'unavailable') {
+      if (snapshot.status === 'unavailable') {
         return h('p', { style: styles.hint }, t('unavailable'))
       }
-      if (state.writable === false) {
+      if (snapshot.writable === false) {
         return h('p', { style: styles.hint }, t('readOnly'))
       }
 
@@ -223,7 +224,7 @@ window.__ModuleLoader__.load({
       const setNumber = (key) => (raw) => setDraft((current) => ({ ...current, [key]: raw === '' ? '' : Number(raw) }))
       const setKib = (key) => (raw) => setDraft((current) => ({ ...current, [key]: raw === '' ? '' : Math.round(Number(raw) * 1024) }))
 
-      const dirty = JSON.stringify(draft) !== JSON.stringify(merge(state.value))
+      const dirty = JSON.stringify(draft) !== JSON.stringify(merge(snapshot.value))
       const canSave = !busy && dirty
 
       const save = async () => {
@@ -233,7 +234,7 @@ window.__ModuleLoader__.load({
         setNotice('')
         try {
           const ops = Object.entries(draft).map(([key, value]) => ({ op: 'set', path: [key], value }))
-          const ok = await form.mutate(ops, state.revision)
+          const ok = await form.mutate(ops, snapshot.revision)
           if (!ok) setError(t('saveFailed'))
           else setNotice(t('saved'))
         } catch (failure) {
@@ -244,7 +245,7 @@ window.__ModuleLoader__.load({
       }
 
       const discard = () => {
-        setDraft(merge(state.value))
+        setDraft(merge(form.getSnapshot().value))
         setError('')
         setNotice('')
       }
@@ -256,23 +257,11 @@ window.__ModuleLoader__.load({
       return h('div', { style: styles.root },
         h('p', { style: styles.hint }, t('description')),
 
-        section(t('sectionCompression'), [
+        section(t('sectionQuick'), [
           h(Field, { key: 'enabled', id: 'ric-enabled', label: t('enabled') },
             h('div', { style: styles.checkRow },
               h('input', { id: 'ric-enabled', type: 'checkbox', checked: draft.enabled, onChange: (e) => set('enabled')(e.target.checked) }))),
           h(NumberField, { key: 'quality', id: 'ric-quality', label: t('quality'), value: draft.quality, min: 1, max: 100, step: 1, onChange: setNumber('quality') }),
-          h(NumberField, { key: 'maxBytes', id: 'ric-max-bytes', label: t('maxBytes'), value: Math.round(Number(draft.maxBytes) / 1024), min: 1, step: 1, onChange: setKib('maxBytes') }),
-          h(NumberField, { key: 'minBytes', id: 'ric-min-bytes', label: t('minBytes'), value: Math.round(Number(draft.minBytes) / 1024), min: 0, step: 1, onChange: setKib('minBytes') }),
-          h(NumberField, { key: 'cacheEntries', id: 'ric-cache', label: t('cacheEntries'), value: draft.cacheEntries, min: 0, max: 4096, step: 1, onChange: setNumber('cacheEntries') }),
-        ]),
-
-        section(t('sectionResolution'), [
-          h(NumberField, { key: 'resolutionScale', id: 'ric-scale', label: t('resolutionScale'), value: draft.resolutionScale, min: 0.1, max: 1, step: 0.05, onChange: setNumber('resolutionScale') }),
-          h(NumberField, { key: 'maxEdge', id: 'ric-max-edge', label: t('maxEdge'), value: draft.maxEdge, min: 64, max: 8192, step: 1, onChange: setNumber('maxEdge') }),
-          h(NumberField, { key: 'minResizeScale', id: 'ric-min-resize', label: t('minResizeScale'), value: draft.minResizeScale, min: 0.1, max: 1, step: 0.05, onChange: setNumber('minResizeScale') }),
-        ]),
-
-        section(t('sectionFormat'), [
           h(Field, { key: 'format', id: 'ric-format', label: t('format') },
             h('select', {
               id: 'ric-format', value: draft.format, style: styles.input,
@@ -292,9 +281,7 @@ window.__ModuleLoader__.load({
                   onChange: (e) => set('jpegBackground')(e.target.value),
                 }))
             : null,
-        ]),
-
-        section(t('sectionSummary'), [
+          h(NumberField, { key: 'resolutionScale', id: 'ric-scale', label: t('resolutionScale'), value: draft.resolutionScale, min: 0.1, max: 1, step: 0.05, onChange: setNumber('resolutionScale') }),
           h(Field, { key: 'summaryMode', id: 'ric-summary-mode', label: t('summaryMode') },
             h('select', {
               id: 'ric-summary-mode', value: draft.summaryMode, style: styles.input,
@@ -312,13 +299,18 @@ window.__ModuleLoader__.load({
               h('option', { value: 'en' }, t('languageEn')))),
         ]),
 
-        section(t('sectionBehaviour'), [
-          h(Field, { key: 'skipGif', id: 'ric-skip-gif', label: t('skipGif') },
-            h('div', { style: styles.checkRow },
-              h('input', { id: 'ric-skip-gif', type: 'checkbox', checked: draft.skipGif, onChange: (e) => set('skipGif')(e.target.checked) }))),
+        section(t('sectionAdvanced'), [
+          h(NumberField, { key: 'maxEdge', id: 'ric-max-edge', label: t('maxEdge'), value: draft.maxEdge, min: 64, max: 8192, step: 1, onChange: setNumber('maxEdge') }),
+          h(NumberField, { key: 'maxBytes', id: 'ric-max-bytes', label: t('maxBytes'), value: Math.round(Number(draft.maxBytes) / 1024), min: 1, step: 1, onChange: setKib('maxBytes') }),
+          h(NumberField, { key: 'minBytes', id: 'ric-min-bytes', label: t('minBytes'), value: Math.round(Number(draft.minBytes) / 1024), min: 0, step: 1, onChange: setKib('minBytes') }),
+          h(NumberField, { key: 'minResizeScale', id: 'ric-min-resize', label: t('minResizeScale'), value: draft.minResizeScale, min: 0.1, max: 1, step: 0.05, onChange: setNumber('minResizeScale') }),
+          h(NumberField, { key: 'cacheEntries', id: 'ric-cache', label: t('cacheEntries'), value: draft.cacheEntries, min: 0, max: 4096, step: 1, onChange: setNumber('cacheEntries') }),
           h(Field, { key: 'downscaleWebp', id: 'ric-downscale-webp', label: t('downscaleWebp') },
             h('div', { style: styles.checkRow },
               h('input', { id: 'ric-downscale-webp', type: 'checkbox', checked: draft.downscaleWebp, onChange: (e) => set('downscaleWebp')(e.target.checked) }))),
+          h(Field, { key: 'skipGif', id: 'ric-skip-gif', label: t('skipGif') },
+            h('div', { style: styles.checkRow },
+              h('input', { id: 'ric-skip-gif', type: 'checkbox', checked: draft.skipGif, onChange: (e) => set('skipGif')(e.target.checked) }))),
         ]),
 
         h('div', { style: styles.actions },
@@ -332,14 +324,22 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'configForms'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, DICT))
-        ctx.effect(() => ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
-          name: 'plugins.row.config',
-          key: '@local/dsh-read-image-compress#read-image-compress',
-          locale: NS,
-        }, SettingsCard)))
+
+        // The row's Host settings namespace is the single document; bind it
+        // once and hand the same form to the bundle-page card.
+        const form = ctx.configForms.get(SETTINGS_NAMESPACE)
+        const Card = (props) => h(SettingsCard, { ...props, form })
+
+        ctx.effect(() => ctx.configForms.whileServed([SETTINGS_NAMESPACE], () =>
+          ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
+            name: 'plugins.bundle.config',
+            key: BUNDLE,
+            id: BUNDLE,
+            locale: NS,
+          }, Card))))
       },
     }
   },
