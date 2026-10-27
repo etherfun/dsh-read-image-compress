@@ -1,0 +1,19 @@
+- insert:
+    - id: read-image-compress
+      name: '@local/dsh-read-image-compress'
+      config:
+        enabled: true
+        quality: 85
+        resolutionScale: 1
+        format: auto
+        maxEdge: 1568
+        maxBytes: 524288
+        minBytes: 131072
+        minResizeScale: 0.9
+        webpEffort: 4
+        jpegBackground: '#ffffff'
+        cacheEntries: 128
+        downscaleWebp: true
+        skipGif: true
+        summaryMode: detailed
+        summaryLanguage: zh
