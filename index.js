@@ -511,7 +511,9 @@ function summaryLine(image, replacement, source, options) {
   const compressedSize = formatBytes(replacement.bytes)
   const multiplier = formatMultiplier(source.bytes, replacement.bytes)
   const bytesDelta = source.bytes > 0 ? (1 - replacement.bytes / source.bytes) * 100 : undefined
-  const resolutionPercent = percentOf(Math.max(source.width, source.height), Math.max(replacement.width, replacement.height))
+  const resolutionDelta = percentOf(Math.max(source.width, source.height), Math.max(replacement.width, replacement.height)) === undefined
+    ? undefined
+    : (1 - Math.max(replacement.width, replacement.height) / Math.max(source.width, source.height)) * 100
   const sourceFormat = mediaLabelForPath(source.path, image.mediaType)
   const compressedFormat = mediaLabel(replacement.mediaType)
   const raster = (width, height) => `${width}×${height}`
@@ -534,7 +536,10 @@ function summaryLine(image, replacement, source, options) {
     const arrow = bytesDelta >= 0 ? '↓' : '↑'
     details.push(zh ? `体积 ${arrow}${Math.abs(bytesDelta).toFixed(1)}%` : `bytes ${arrow}${Math.abs(bytesDelta).toFixed(1)}%`)
   }
-  if (resolutionPercent !== undefined) details.push(zh ? `分辨率 ${resolutionPercent}%` : `resolution ${resolutionPercent}%`)
+  if (resolutionDelta !== undefined && Number.isFinite(resolutionDelta)) {
+    const arrow = resolutionDelta >= 0 ? '↓' : '↑'
+    details.push(zh ? `分辨率 ${arrow}${Math.abs(resolutionDelta).toFixed(1)}%` : `resolution ${arrow}${Math.abs(resolutionDelta).toFixed(1)}%`)
+  }
 
   const ratio = multiplier === undefined
     ? details.length === 0 ? undefined : details[0]

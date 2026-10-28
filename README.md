@@ -24,7 +24,7 @@ Expanding a `read_image` row shows the path, the built-in size line, and then
 the footer the plugin appends below the gallery:
 
 ```text
-原图: 4096×2600 · 3.90 MB · PNG | 压缩后: 1568×996 · 255 KB · WebP | 压缩比: 15.7×（体积 ↓93.7%，分辨率 38.3%）
+原图: 4096×2600 · 3.90 MB · PNG | 压缩后: 1568×996 · 255 KB · WebP | 压缩比: 15.7×（体积 ↓93.7%，分辨率 ↓61.7%）
 ```
 
 - **原图** is the file as read: `originalDimensions` when the attachment store
@@ -34,8 +34,8 @@ the footer the plugin appends below the gallery:
   re-encoded the source (a PNG can be committed as JPEG).
 - **压缩后** is the committed attachment the gallery displays.
 - **压缩比** is `original bytes / compressed bytes`, followed by the byte delta
-  and the resolution ratio (compressed long edge ÷ original long edge), so both
-  the token-saving and the visible detail loss are explicit.
+  and how much resolution was shed (1 − compressed long edge ÷ original long
+  edge), so both the token-saving and the visible detail loss are explicit.
 
 `summaryMode: compact` produces `4096×2600 3.90 MB → 1568×996 255 KB · 15.7×`;
 `summaryMode: off` removes the footer entirely. `summaryLanguage` switches the
