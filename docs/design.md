@@ -506,10 +506,10 @@ if (Object.hasOwn(decision, "content") && Object.hasOwn(decision, "value"))
 `compressedContent()` 做三件事：
 
 1. 用 `IMAGE_ENVELOPE` 正则定位 envelope text block，按新尺寸重建（含 `compressed from WxH px, N bytes; multiply coordinates by x` 的坐标提示）；
-2. 把 image block 的 `attachment` 换成新提交的引用，且**不再带 `originalDimensions`**，避免内置大小行与底部描述重复；
+2. 把 image block 的 ttachment 换成新提交的引用，且**不再带 originalDimensions**，避免内置大小行与底部描述重复；<path> / <type> / <content> / </content> 四行**原样保留**，只重写中间那行描述（etagEnvelope()），这样 DSH 将来改动包装层也不会被我们写死；etagEnvelope() 认不出形状时才退回整段重建；
 3. 末尾追加描述 text block。
 
-「原图」的事实来源：`originalDimensions`（入库规范化前）优先，否则用附件栅格；字节数优先 `stat(meta.path)` 取磁盘真实大小（入库规范化会重新编码，`bytes` 只是规范化后的字节数），stat 失败时退回附件字节。
+「原图」的事实来源：`originalDimensions`（入库规范化前）优先，否则用附件栅格；字节数优先 `stat(meta.path)` 取磁盘真实大小（入库规范化会重新编码，`bytes` 只是规范化后的字节数），stat 失败时退回附件字节；格式标签读磁盘扩展名，因为规范化可能把 PNG 存成 JPEG（实测 3200×2000 的 PNG 在附件里就是 image/jpeg）。
 
 ### 12.4 描述格式
 

@@ -433,6 +433,21 @@ function mediaLabel(mediaType) {
   return MEDIA_LABELS.get(mediaType) ?? String(mediaType).replace(/^image\//u, '').toUpperCase()
 }
 
+/**
+ * The format the file on disk had, read from its extension. The attachment
+ * store may re-encode a large source (a PNG can be committed as JPEG), so the
+ * attachment's media type is only a fallback for extension-less reads.
+ */
+function mediaLabelForPath(displayPath, fallback) {
+  const match = typeof displayPath === 'string' ? /\.([a-z0-9]+)$/iu.exec(displayPath) : undefined
+  const extension = match?.[1]?.toLowerCase()
+  if (extension === 'png') return 'PNG'
+  if (extension === 'jpg' || extension === 'jpeg') return 'JPEG'
+  if (extension === 'webp') return 'WebP'
+  if (extension === 'gif') return 'GIF'
+  return mediaLabel(fallback)
+}
+
 /** Adaptive B/KB/MB/GB size text; undefined for a missing measure. */
 function formatBytes(bytes) {
   if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return undefined
@@ -497,7 +512,7 @@ function summaryLine(image, replacement, source, options) {
   const multiplier = formatMultiplier(source.bytes, replacement.bytes)
   const bytesDelta = source.bytes > 0 ? (1 - replacement.bytes / source.bytes) * 100 : undefined
   const edgePercent = percentOf(Math.max(source.width, source.height), Math.max(replacement.width, replacement.height))
-  const sourceFormat = mediaLabel(image.mediaType)
+  const sourceFormat = mediaLabelForPath(source.path, image.mediaType)
   const compressedFormat = mediaLabel(replacement.mediaType)
   const raster = (width, height) => `${width}×${height}`
 
@@ -531,8 +546,8 @@ function summaryLine(image, replacement, source, options) {
   return `Original: ${sourceParts.join(' · ')} | Compressed: ${compressedParts.join(' · ')}${ratio === undefined ? '' : ` | Ratio: ${ratio}`}`
 }
 
-/** The envelope the conversation card recognizes, rebuilt for the compressed raster. */
-function envelopeText(displayPath, replacement, source) {
+/** The model-facing description line: what the block now holds, and what it came from. */
+function descriptionLine(replacement, source) {
   const resized = replacement.width !== source.width || replacement.height !== source.height
   const reencoded = !resized && source.bytes !== undefined && replacement.bytes !== source.bytes
   let note = ''
@@ -547,7 +562,28 @@ function envelopeText(displayPath, replacement, source) {
   } else if (reencoded) {
     note = ` (re-encoded from ${source.bytes} bytes)`
   }
-  return `<path>${displayPath}</path>\n<type>image</type>\n<content>\n${replacement.mediaType} image, ${replacement.width}x${replacement.height} px, ${replacement.bytes} bytes${note}\n</content>`
+  return `${replacement.mediaType} image, ${replacement.width}x${replacement.height} px, ${replacement.bytes} bytes${note}`
+}
+
+/** The envelope the conversation card recognizes, rebuilt for the compressed raster. */
+function envelopeText(displayPath, replacement, source) {
+  return `<path>${displayPath}</path>\n<type>image</type>\n<content>\n${descriptionLine(replacement, source)}\n</content>`
+}
+
+/**
+ * Rewrite only the description line of the envelope DSH produced, keeping every
+ * wrapper line (`<path>`, `<type>`, `<content>`, `</content>`) byte for byte.
+ * The conversation card recognizes the envelope by that exact shape, so a
+ * surgical edit keeps us compatible with wrapper details we do not own.
+ */
+function retagEnvelope(text, replacement, source) {
+  if (typeof text !== 'string') return undefined
+  const lines = text.split('\n')
+  const closeIndex = lines.lastIndexOf('</content>')
+  if (closeIndex < 3) return undefined
+  if (!/^<path>[^\n]*<\/path>$/u.test(lines[0] ?? '')) return undefined
+  if (lines[1] !== '<type>image</type>' || lines[2] !== '<content>') return undefined
+  return [...lines.slice(0, 3), descriptionLine(replacement, source), '</content>'].join('\n')
 }
 
 const IMAGE_ENVELOPE = /^<path>[^\n]*<\/path>\n<type>image<\/type>\n<content>\n[\s\S]*\n<\/content>$/u
@@ -575,7 +611,12 @@ function compressedContent(result, value, replacement, options, source) {
   const displayPath = source.path ?? value.path
   const summary = summaryLine(value.image, replacement, source, options)
   const rebuilt = content.map((part, index) => {
-    if (index === envelopeIndex) return { type: 'text', text: envelopeText(displayPath, replacement, source) }
+    if (index === envelopeIndex) {
+      // Keep DSH's own wrapper (`<path>` … `</content>`) and swap only the
+      // description line; rebuild from scratch only for an unexpected shape.
+      const retagged = retagEnvelope(part.text, replacement, source)
+      return { type: 'text', text: retagged ?? envelopeText(displayPath, replacement, source) }
+    }
     if (index === imageIndex) return { type: 'image', attachment: replacement }
     return part
   })

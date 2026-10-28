@@ -29,7 +29,9 @@ the footer the plugin appends below the gallery:
 
 - **原图** is the file as read: `originalDimensions` when the attachment store
   normalized a larger source, otherwise the attachment raster; the byte count is
-  the on-disk file size recovered with a best-effort `stat` of the display path.
+  the on-disk file size recovered with a best-effort `stat` of the display path,
+  and the format label comes from the file extension because admission may have
+  re-encoded the source (a PNG can be committed as JPEG).
 - **压缩后** is the committed attachment the gallery displays.
 - **压缩比** is `original bytes / compressed bytes`, followed by the byte delta
   and the long-edge scale, so both the token-saving and the visible detail loss
@@ -41,7 +43,10 @@ labels between Chinese and English. Skipped images (already small, GIFs) get no
 footer because nothing was re-encoded.
 
 The same text also stays in the model-facing content as a plain text block, so
-the model knows the original raster when it reasons about coordinates.
+the model knows the original raster when it reasons about coordinates. The
+envelope DSH produced is kept byte for byte — `<path>`, `<type>`, `<content>`
+and `</content>` — and only its description line is rewritten, so the card keeps
+recognizing the block even if DSH later changes the wrapper around it.
 
 ## Settings
 
