@@ -24,7 +24,7 @@ Expanding a `read_image` row shows the path, the built-in size line, and then
 the footer the plugin appends below the gallery:
 
 ```text
-原图: 4096×2600 · 3.90 MB · PNG | 压缩后: 1568×996 · 255 KB · WebP | 压缩比: 15.7×（体积 ↓93.7%，长边 38.3%）
+原图: 4096×2600 · 3.90 MB · PNG | 压缩后: 1568×996 · 255 KB · WebP | 压缩比: 15.7×（体积 ↓93.7%，分辨率 38.3%）
 ```
 
 - **原图** is the file as read: `originalDimensions` when the attachment store
@@ -34,8 +34,8 @@ the footer the plugin appends below the gallery:
   re-encoded the source (a PNG can be committed as JPEG).
 - **压缩后** is the committed attachment the gallery displays.
 - **压缩比** is `original bytes / compressed bytes`, followed by the byte delta
-  and the long-edge scale, so both the token-saving and the visible detail loss
-  are explicit.
+  and the resolution ratio (compressed long edge ÷ original long edge), so both
+  the token-saving and the visible detail loss are explicit.
 
 `summaryMode: compact` produces `4096×2600 3.90 MB → 1568×996 255 KB · 15.7×`;
 `summaryMode: off` removes the footer entirely. `summaryLanguage` switches the
@@ -43,10 +43,11 @@ labels between Chinese and English. Skipped images (already small, GIFs) get no
 footer because nothing was re-encoded.
 
 The same text also stays in the model-facing content as a plain text block, so
-the model knows the original raster when it reasons about coordinates. The
-envelope DSH produced is kept byte for byte — `<path>`, `<type>`, `<content>`
-and `</content>` — and only its description line is rewritten, so the card keeps
-recognizing the block even if DSH later changes the wrapper around it.
+the model sees the compressed raster beside the file facts. The envelope DSH
+produced (`<path>`, `<type>`, `<content>`, `</content>`) is passed through
+untouched; only the image block is repointed at the committed attachment, which
+keeps the conversation card recognizing the block and keeps the model-facing
+text exactly as the tool reported it.
 
 ## Settings
 
