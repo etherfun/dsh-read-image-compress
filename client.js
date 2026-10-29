@@ -37,36 +37,31 @@ window.__ModuleLoader__.load({
       summaryLanguage: 'zh',
     })
 
-    /** The provider normalizes an image to 544²..1300² before billing it and caps one image at 1024 tokens. */
-    const MIN_BILLED_PIXELS = 544 * 544
-    const MAX_BILLED_PIXELS = 1300 * 1300
-    const IMAGE_TOKEN_CAP = 1024
-    const SAMPLE = Object.freeze({ width: 3200, height: 2000 })
-
-    /** The per-image token estimate the provider's stated rule implies. */
-    function estimateTokens(width, height) {
-      const area = width * height
-      if (!(area > 0)) return 0
-      const billed = Math.min(MAX_BILLED_PIXELS, Math.max(MIN_BILLED_PIXELS, area))
-      return Math.max(1, Math.round((billed / MAX_BILLED_PIXELS) * IMAGE_TOKEN_CAP))
+    /** Adaptive B/KB/MB text for the preview cards. */
+    function formatBytes(bytes) {
+      if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return '—'
+      if (bytes < 1024) return `${Math.round(bytes)} B`
+      const units = ['KB', 'MB', 'GB']
+      let value = bytes / 1024
+      let unit = 0
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024
+        unit += 1
+      }
+      const digits = value >= 100 ? 0 : value >= 10 ? 1 : 2
+      return `${value.toFixed(digits)} ${units[unit]}`
     }
 
-    /** The raster the current draft would produce for the sample image. */
-    function previewTarget(draft) {
-      const { width, height } = SAMPLE
-      const longEdge = Math.max(width, height)
-      const area = width * height
-      const maxPixels = Number(draft.maxPixels)
-      const maxEdge = Number(draft.maxEdge)
-      const resolutionScale = Number(draft.resolutionScale)
-      // A field the person is midway through clearing is not a target; keep the
-      // sample untouched until it parses again.
-      if (!(maxPixels > 0) || !(maxEdge > 0) || !(resolutionScale > 0)) return { width, height }
-      const scale = Math.min(1, resolutionScale, maxEdge / longEdge, Math.sqrt(maxPixels / area))
-      if (!(scale < 1 && scale <= Number(draft.minResizeScale))) return { width, height }
-      return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
-    }
+    /** Three side-by-side renderings of the bundled sample. */
+    const VARIANT_LABEL_KEYS = { original: 'variantOriginal', native: 'variantNative', plugin: 'variantPlugin' }
 
+    function PreviewGrid({ t, data }) {
+      return h('div', { style: styles.cards }, data.variants.map((variant) => h('figure', { key: variant.id, style: styles.card },
+        h('figcaption', { style: styles.cardTitle }, t(VARIANT_LABEL_KEYS[variant.id])),
+        h('img', { src: variant.thumbnail, alt: t(VARIANT_LABEL_KEYS[variant.id]), style: styles.cardImage }),
+        h('div', { style: styles.cardMeta }, `${variant.width}×${variant.height} · ${formatBytes(variant.bytes)}`),
+        h('div', { style: styles.cardMeta }, `≈${variant.tokens} tokens`))))
+    }
     const DICT = {
       en: {
         title: 'Read image compression',
@@ -75,9 +70,13 @@ window.__ModuleLoader__.load({
         sectionQuick: 'Everyday settings',
         sectionAdvanced: 'Advanced',
         sectionPreview: 'Preview',
-        previewRaster: 'Sample {width}×{height} → {outWidth}×{outHeight}',
-        previewMeta: 'resolution ↓{percent}% · ≈{tokens} tokens (per-image cap 1024)',
+        previewHint: 'One real photo through three pipelines: as read, as the harness alone delivers it (2048² / 1 MiB), and as this plugin commits it with the settings below.',
+        previewLoading: 'Rendering the preview…',
+        previewError: 'The preview endpoint is unavailable (it needs the running host and the bundled sample).',
         previewOff: 'The footer is off, so this line will not appear when expanded.',
+        variantOriginal: 'Original',
+        variantNative: 'Native compression',
+        variantPlugin: 'This plugin',
         enabled: 'Enable compression',
         quality: 'Quality (1–100)',
         resolutionScale: 'Resolution scale (0.1–1)',
@@ -123,9 +122,13 @@ window.__ModuleLoader__.load({
         sectionQuick: '常用设置',
         sectionAdvanced: '高级设置',
         sectionPreview: '预览',
-        previewRaster: '示例 {width}×{height} → 压缩后 {outWidth}×{outHeight}',
-        previewMeta: '分辨率 ↓{percent}% · 预计 ≈{tokens} tokens（单图上限 1024）',
+        previewHint: '同一张真实照片的三种结果：原图、DSH 原生压缩（2048² / 1 MiB），以及本插件按下方设置提交的版本。',
+        previewLoading: '正在生成预览…',
+        previewError: '预览接口不可用（需要运行中的宿主与随包示例图）。',
         previewOff: '底部描述已关闭，展开时不会显示这一行。',
+        variantOriginal: '原图',
+        variantNative: '原生压缩',
+        variantPlugin: '插件压缩',
         enabled: '启用压缩',
         quality: '质量（1–100）',
         resolutionScale: '分辨率缩放（0.1–1）',
@@ -229,6 +232,24 @@ window.__ModuleLoader__.load({
         lineHeight: 1.5,
         overflowX: 'auto',
       },
+      cards: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+        gap: '12px',
+        margin: '0 0 16px',
+      },
+      card: { margin: 0, minWidth: 0 },
+      cardTitle: { fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: 'var(--dsw-alias-label-primary, #1f2328)' },
+      cardImage: {
+        display: 'block',
+        width: '100%',
+        height: 'auto',
+        borderRadius: '6px',
+        border: '1px solid var(--dsw-alias-border-1, #d0d7de)',
+        background: 'var(--dsw-alias-bg-layer-2, #f6f8fa)',
+        marginBottom: '6px',
+      },
+      cardMeta: { fontSize: '11.5px', lineHeight: 1.45, color: 'var(--dsw-alias-label-secondary, #6b7280)' },
     }
 
     function merge(value) {
@@ -264,6 +285,47 @@ window.__ModuleLoader__.load({
         setError('')
         setNotice('')
       }, [form, snapshot.revision])
+
+      const [preview, setPreview] = React.useState({ status: 'loading', data: undefined })
+      const previewKey = JSON.stringify({
+        quality: draft.quality,
+        resolutionScale: draft.resolutionScale,
+        format: draft.format,
+        maxEdge: draft.maxEdge,
+        maxPixels: draft.maxPixels,
+        maxBytes: draft.maxBytes,
+        minResizeScale: draft.minResizeScale,
+        webpEffort: draft.webpEffort,
+        jpegBackground: draft.jpegBackground,
+        downscaleWebp: draft.downscaleWebp,
+      })
+      React.useEffect(() => {
+        // A field being cleared mid-edit is not a request; keep the last preview.
+        const numeric = ['quality', 'resolutionScale', 'maxEdge', 'maxPixels', 'maxBytes', 'minBytes', 'minResizeScale', 'webpEffort']
+        if (!numeric.every((key) => draft[key] !== '' && Number.isFinite(Number(draft[key])))) return undefined
+        const controller = new AbortController()
+        const timer = setTimeout(() => {
+          setPreview((current) => ({ status: current.data === undefined ? 'loading' : 'refreshing', data: current.data }))
+          fetch('/api/read-image-compress/preview', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: previewKey,
+            credentials: 'same-origin',
+            signal: controller.signal,
+          })
+            .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
+            .then((data) => {
+              if (data?.ok === true) setPreview({ status: 'ready', data })
+            })
+            .catch((failure) => {
+              if (failure?.name !== 'AbortError') setPreview({ status: 'error', data: undefined })
+            })
+        }, 300)
+        return () => {
+          clearTimeout(timer)
+          controller.abort()
+        }
+      }, [previewKey])
 
       if (view === 'summary') return h('span', null, t('summary'))
       if (snapshot.status === 'loading') {
@@ -310,6 +372,16 @@ window.__ModuleLoader__.load({
       const section = (title, rows) => h('section', { style: styles.section },
         h('h4', { style: styles.heading }, title),
         h('div', { style: styles.grid }, rows))
+
+      const previewSection = h('section', { style: styles.section },
+        h('h4', { style: styles.heading }, t('sectionPreview')),
+        h('p', { style: styles.hint }, t('previewHint')),
+        preview.status === 'error'
+          ? h('p', { style: styles.error }, t('previewError'))
+          : preview.data === undefined
+            ? h('p', { style: styles.hint }, t('previewLoading'))
+            : h(PreviewGrid, { t, data: preview.data }),
+        draft.summaryMode === 'off' ? h('p', { style: styles.hint }, t('previewOff')) : null)
 
       return h('div', { style: styles.root },
         h('p', { style: styles.hint }, t('saveHint')),
@@ -372,17 +444,7 @@ window.__ModuleLoader__.load({
               h('input', { id: 'ric-skip-gif', type: 'checkbox', checked: draft.skipGif, onChange: (e) => set('skipGif')(e.target.checked) }))),
         ]),
 
-        (() => {
-          const target = previewTarget(draft)
-          const tokens = estimateTokens(target.width, target.height)
-          const percent = ((1 - Math.max(target.width, target.height) / Math.max(SAMPLE.width, SAMPLE.height)) * 100).toFixed(1)
-          return h('section', { style: styles.section },
-            h('h4', { style: styles.heading }, t('sectionPreview')),
-            h('div', { style: styles.example },
-              h('div', null, t('previewRaster', { width: SAMPLE.width, height: SAMPLE.height, outWidth: target.width, outHeight: target.height })),
-              h('div', null, t('previewMeta', { percent, tokens })),
-              draft.summaryMode === 'off' ? h('div', null, t('previewOff')) : null))
-        })(),
+        previewSection,
 
         h('div', { style: styles.actions },
           h('button', { type: 'button', style: styles.primary, disabled: !canSave, onClick: save }, busy ? t('saving') : t('save')),
@@ -395,6 +457,8 @@ window.__ModuleLoader__.load({
     }
 
     return {
+      // Exposed for the offline test harness only; the module loader ignores it.
+      __components: { PreviewGrid },
       inject: ['slots', 'locale', 'configForms'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, DICT))

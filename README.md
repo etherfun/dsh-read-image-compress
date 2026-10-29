@@ -42,11 +42,24 @@ the footer the plugin appends below the gallery:
 
 ### Preview
 
-The settings card renders a live preview for a 3200×2000 sample: the raster the
-current `maxEdge` / `maxPixels` / `resolutionScale` would produce, the
-resolution drop, and the estimated per-image token cost. It follows the draft,
-so the numbers change before you save; `summaryMode: off` is called out there
-too.
+The settings card renders the plugin's bundled sample photo through three real
+pipelines, side by side, on every draft change (debounced):
+
+| Variant | What it is |
+|---|---|
+| 原图 / Original | the sample as read: 3200×2000, JPEG q92 |
+| 原生压缩 / Native | what the harness alone delivers — fit inside 2048², JPEG quality ladder down to 1 MiB |
+| 插件压缩 / This plugin | the same photo encoded with the current `maxEdge` / `maxPixels` / `resolutionScale` / `format` / `quality` |
+
+Each column shows a 560 px thumbnail, the true raster and byte size, and the
+estimated token cost. The numbers come from the Host, not the browser: the
+plugin registers `POST /api/read-image-compress/preview`, which runs the same
+`sharp` build as the hook, so the sizes match what `read_image` would commit.
+The route caches the last six drafts and reads `preview/sample.png` from the
+package.
+
+`summaryMode: off` is called out under the grid; `values` that are mid-edit
+(an emptied number field) simply keep the previous preview until they parse.
 
 ### Why the pixel budget
 
@@ -154,6 +167,7 @@ index.js            host half: tools/post-execute hook, Sharp encoder, footer
 client.js           browser half: bundle-page settings card (plugins.bundle.config)
 cordis.patch.yml    bundle insert row and default config
 locale/{en,zh}.json bundle metadata strings
+preview/sample.png  the real photo behind the settings preview
 docs/design.md      architecture, contracts, and the hook rationale
 docs/benchmark.md   measured compression ratio, quality loss, and cache results
 ```

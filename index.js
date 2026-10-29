@@ -15,7 +15,7 @@
  */
 
 import path from 'node:path'
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 
 export const name = 'read-image-compress'
@@ -610,6 +610,193 @@ function compressedContent(result, value, replacement, options, source) {
 
 //#endregion
 
+//#region Preview endpoint
+
+/**
+ * Browser preview: three real renderings of one bundled photo — as read, as the
+ * harness alone would deliver it, and as this plugin would commit it — encoded
+ * by the same sharp build the hook uses. The card fetches this on draft changes.
+ */
+const PREVIEW_ROUTE = '/api/read-image-compress/preview'
+const PREVIEW_SOURCE = new URL('./preview/sample.png', import.meta.url)
+const PREVIEW_WIDTH = 3200
+const PREVIEW_HEIGHT = 2000
+const PREVIEW_NATIVE_MAX_EDGE = 2048
+const PREVIEW_NATIVE_MAX_BYTES = 1048576
+const PREVIEW_NATIVE_LADDER = [85, 75, 60]
+const PREVIEW_THUMB_WIDTH = 560
+const PREVIEW_BODY_LIMIT = 16384
+const PREVIEW_CACHE_ENTRIES = 6
+
+let previewSamplePromise
+let previewSample
+const previewCache = new Map()
+
+/** The 3200×2000 JPEG the three variants start from, encoded once per process. */
+async function previewSampleBuffer() {
+  if (previewSample !== undefined) return previewSample
+  if (previewSamplePromise === undefined) {
+    previewSamplePromise = (async () => {
+      const raw = await readFile(PREVIEW_SOURCE)
+      const { data, info } = await sharp(raw)
+        .resize({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT, fit: 'cover', position: 'centre' })
+        .jpeg({ quality: 92 })
+        .toBuffer({ resolveWithObject: true })
+      previewSample = { buffer: data, width: info.width, height: info.height, bytes: data.length }
+      return previewSample
+    })().catch((error) => {
+      previewSamplePromise = undefined
+      throw error
+    })
+  }
+  return previewSamplePromise
+}
+
+/** Encode the plugin's variant of the sample with the draft settings (never skipped). */
+async function encodePluginVariant(sample, options) {
+  const facts = { width: sample.width, height: sample.height, bytes: sample.bytes, mediaType: 'image/jpeg' }
+  const hasAlpha = false
+  const target = targetFor(facts, options)
+  const format = formatFor(hasAlpha, options)
+  let base = sharp(sample.buffer, { failOn: 'error', limitInputPixels: false }).toColourspace('srgb')
+  if (target.resize) {
+    base = base.resize({ width: target.width, height: target.height, fit: 'inside', withoutEnlargement: true })
+  }
+  if (format === 'jpeg') base = base.flatten({ background: options.jpegBackground })
+
+  let best
+  for (const quality of format === 'png' ? [null] : qualitySteps(options.quality)) {
+    let pipeline = base.clone()
+    if (format === 'jpeg') pipeline = pipeline.jpeg({ quality })
+    else if (format === 'webp') pipeline = pipeline.webp({ quality, effort: options.webpEffort })
+    else pipeline = pipeline.png({ compressionLevel: 9, bitdepth: 8 })
+    const output = await pipeline.toBuffer({ resolveWithObject: true })
+    const candidate = {
+      data: output.data,
+      mediaType: mediaTypeOf(format),
+      bytes: output.data.length,
+      width: output.info.width,
+      height: output.info.height,
+    }
+    if (best === undefined || candidate.bytes < best.bytes) best = candidate
+    if (format === 'png' || candidate.bytes <= options.maxBytes) break
+  }
+  return best
+}
+
+/** What the harness alone delivers: fit inside 2048², JPEG ladder to 1 MiB. */
+async function encodeNativeVariant(sample) {
+  const longEdge = Math.max(sample.width, sample.height)
+  const scale = Math.min(1, PREVIEW_NATIVE_MAX_EDGE / longEdge)
+  let base = sharp(sample.buffer, { failOn: 'error', limitInputPixels: false }).toColourspace('srgb')
+  if (scale < 1) {
+    base = base.resize({
+      width: Math.max(1, Math.round(sample.width * scale)),
+      height: Math.max(1, Math.round(sample.height * scale)),
+      fit: 'inside',
+      withoutEnlargement: true,
+    })
+  }
+  let best
+  for (const quality of PREVIEW_NATIVE_LADDER) {
+    const output = await base.clone().jpeg({ quality }).toBuffer({ resolveWithObject: true })
+    const candidate = {
+      data: output.data,
+      bytes: output.data.length,
+      width: output.info.width,
+      height: output.info.height,
+    }
+    if (best === undefined || candidate.bytes < best.bytes) best = candidate
+    if (candidate.bytes <= PREVIEW_NATIVE_MAX_BYTES) break
+  }
+  return best
+}
+
+/** A small JPEG data URL for the card; the reported facts stay those of the variant. */
+async function previewThumbnail(buffer) {
+  const output = await sharp(buffer)
+    .resize({ width: PREVIEW_THUMB_WIDTH, withoutEnlargement: true })
+    .jpeg({ quality: 78 })
+    .toBuffer()
+  return `data:image/jpeg;base64,${output.toString('base64')}`
+}
+
+/** Encode the three variants and pair each with its facts and thumbnail. */
+async function previewPayload(draft) {
+  const options = normalizeConfig(draft)
+  const sample = await previewSampleBuffer()
+  const [native, plugin] = await Promise.all([
+    encodeNativeVariant(sample),
+    encodePluginVariant(sample, options),
+  ])
+  const variants = [
+    { id: 'original', width: sample.width, height: sample.height, bytes: sample.bytes, buffer: sample.buffer },
+    { id: 'native', width: native.width, height: native.height, bytes: native.bytes, buffer: native.data },
+    { id: 'plugin', width: plugin.width, height: plugin.height, bytes: plugin.bytes, buffer: plugin.data },
+  ]
+  const thumbnails = await Promise.all(variants.map((variant) => previewThumbnail(variant.buffer)))
+  return {
+    ok: true,
+    sample: { width: sample.width, height: sample.height, bytes: sample.bytes },
+    variants: variants.map((variant, index) => ({
+      id: variant.id,
+      width: variant.width,
+      height: variant.height,
+      bytes: variant.bytes,
+      tokens: estimateTokens(variant.width, variant.height),
+      thumbnail: thumbnails[index],
+    })),
+  }
+}
+
+/** Register the preview route on the web server shown to the browser. */
+function installPreview(ctx, rawConfig) {
+  let webServer
+  try {
+    webServer = ctx.get('webServer')
+  } catch {
+    webServer = undefined
+  }
+  if (sharp === undefined || typeof webServer?.register !== 'function') {
+    warnOnce(ctx, 'preview', 'Preview route not registered: sharp or webServer is unavailable')
+    return
+  }
+
+  const handler = async (req, res) => {
+    const send = (status, payload) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(JSON.stringify(payload))
+    }
+    try {
+      let body = ''
+      for await (const chunk of req) {
+        body += chunk
+        if (body.length > PREVIEW_BODY_LIMIT) throw new Error('preview draft is too large')
+      }
+      const draft = body === '' ? {} : JSON.parse(body)
+      if (draft === null || typeof draft !== 'object' || Array.isArray(draft)) throw new Error('preview draft must be an object')
+      const key = JSON.stringify(draft)
+      const cached = previewCache.get(key)
+      if (cached !== undefined) {
+        previewCache.delete(key)
+        previewCache.set(key, cached)
+        return send(200, cached)
+      }
+      const payload = await previewPayload({ ...rawConfig, ...draft })
+      previewCache.set(key, payload)
+      while (previewCache.size > PREVIEW_CACHE_ENTRIES) previewCache.delete(previewCache.keys().next().value)
+      return send(200, payload)
+    } catch (error) {
+      warn(ctx, `preview failed: ${error instanceof Error ? error.message : String(error)}`)
+      return send(500, { ok: false, error: 'preview unavailable' })
+    }
+  }
+
+  ctx.effect(() => webServer.register({ kind: 'exact', path: PREVIEW_ROUTE, handler }), 'read-image-compress: preview route')
+}
+
+//#endregion
+
 export function apply(ctx, rawConfig) {
   // Validate once so a broken profile row fails loudly at activation. The
   // listener re-reads the volatile fields per call so settings changes apply
@@ -654,4 +841,6 @@ export function apply(ctx, rawConfig) {
     // fall back to replacing only the canonical value.
     return { ...downstream, value: { path: value.path, image: replacement } }
   })
+
+  installPreview(ctx, rawConfig)
 }
