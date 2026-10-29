@@ -496,8 +496,7 @@ function percentOf(from, to) {
  * 3x patch downsampling, one image capped at 1024 tokens, images below 544²
  * upscaled. `imageTokens(w, h, cap)` reproduces it; the display uses an
  * effectively unlimited cap so an oversized raster shows how far past 1024 it
- * is, and `billedTokens` gives the value the server would charge after its own
- * recompression.
+ * is, and the footer notes that the server may recompress it.
  */
 const IMAGE_TOKEN_CAP = 1024
 const PATCH_SIZE = 14
