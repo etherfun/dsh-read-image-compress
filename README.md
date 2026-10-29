@@ -27,7 +27,7 @@ settings card. Every combination is valid:
 | Resolution | Bitrate | What happens |
 |---|---|---|
 | on | on | Downscale to the budget **and** walk the quality ladder into `maxBytes`. The default, and the smallest files. |
-| on | off | Downscale only. With `format: auto` the source codec is kept, so a PNG is re-encoded lossless and JPEG/WebP stay JPEG/WebP; the ladder starts at quality 100 with 4:4:4 chroma instead of `quality`, and only steps down when quality 100 would hand back a *heavier* file than the source. `maxBytes` is ignored, and bytes never grow. |
+| on | off | Downscale only. With `format: auto` the source codec is kept, so a PNG is re-encoded lossless and JPEG/WebP stay JPEG/WebP; the ladder starts at quality 100 with 4:4:4 chroma instead of `quality`, and only steps down when quality 100 would hand back a *heavier* file than the source. `maxBytes` is ignored, and a JPEG/WebP result never exceeds the source byte count. |
 | off | on | No pixel is touched: the original raster is re-encoded down the ladder into `maxBytes`. Use it when detail must survive but the file is enormous. |
 | off | off | Nothing runs — `read_image` results are stored exactly as read. The card says so, and the hook returns before decoding anything. |
 

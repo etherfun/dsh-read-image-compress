@@ -770,7 +770,7 @@ ctx.effect(() => webServer.register({ kind: 'exact', path: '/api/read-image-comp
 | 7.9 MB JPEG q100 4:4:4 | 1568×980 | 1.29 MB，停在 100 级（4:4:4 生效） |
 | 539 KB JPEG q78 | 1568×980 | 133 KB，停在 90 级——比源更清晰，同时更小 |
 
-于是保真档的承诺可以精确表述为：**像素一定只减不增，字节一定不超过原图**。PNG 无法用质量换体积，它走单趟无损编码（`compressionLevel: 9`），体积随像素等比下降。
+于是保真档的承诺可以精确表述为：**像素一定只减不增；JPEG/WebP 的字节一定不超过原图**。PNG 无法用质量换体积，它走单趟无损编码（`compressionLevel: 9`），体积随像素等比下降。
 
 ### 实现要点
 
