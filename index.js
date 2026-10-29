@@ -14,6 +14,7 @@
  * original and compressed dimensions, byte sizes, and the compression ratio.
  */
 
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { readFile, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -613,36 +614,42 @@ function compressedContent(result, value, replacement, options, source) {
 //#region Preview endpoint
 
 /**
- * Browser preview: three real renderings of one bundled photo — as read, as the
- * harness alone would deliver it, and as this plugin would commit it — encoded
- * by the same sharp build the hook uses. The card fetches this on draft changes.
+ * Browser preview: three real renderings of one photo — as read, as the harness
+ * alone would deliver it, and as this plugin would commit it — encoded by the
+ * same sharp build the hook uses. The card may upload its own photo instead of
+ * the bundled sample; uploaded bytes live in a small in-memory store.
  */
 const PREVIEW_ROUTE = '/api/read-image-compress/preview'
-const PREVIEW_SOURCE = new URL('./preview/sample.png', import.meta.url)
+const PREVIEW_SOURCE_ROUTE = '/api/read-image-compress/source'
+const PREVIEW_SAMPLE = new URL('./preview/sample.png', import.meta.url)
 const PREVIEW_WIDTH = 3200
 const PREVIEW_HEIGHT = 2000
 const PREVIEW_NATIVE_MAX_EDGE = 2048
 const PREVIEW_NATIVE_MAX_BYTES = 1048576
 const PREVIEW_NATIVE_LADDER = [85, 75, 60]
 const PREVIEW_THUMB_WIDTH = 560
-const PREVIEW_BODY_LIMIT = 16384
+const PREVIEW_BODY_LIMIT = 32768
+const PREVIEW_UPLOAD_LIMIT = 16 * 1024 * 1024
 const PREVIEW_CACHE_ENTRIES = 6
+const PREVIEW_UPLOAD_ENTRIES = 4
+const PREVIEW_MAX_PIXELS = 64e6
 
 let previewSamplePromise
 let previewSample
 const previewCache = new Map()
+const previewUploads = new Map()
 
-/** The 3200×2000 JPEG the three variants start from, encoded once per process. */
+/** The 3200×2000 JPEG the bundled sample becomes, encoded once per process. */
 async function previewSampleBuffer() {
   if (previewSample !== undefined) return previewSample
   if (previewSamplePromise === undefined) {
     previewSamplePromise = (async () => {
-      const raw = await readFile(PREVIEW_SOURCE)
+      const raw = await readFile(PREVIEW_SAMPLE)
       const { data, info } = await sharp(raw)
         .resize({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT, fit: 'cover', position: 'centre' })
         .jpeg({ quality: 92 })
         .toBuffer({ resolveWithObject: true })
-      previewSample = { buffer: data, width: info.width, height: info.height, bytes: data.length }
+      previewSample = { buffer: data, width: info.width, height: info.height, bytes: data.length, hasAlpha: false }
       return previewSample
     })().catch((error) => {
       previewSamplePromise = undefined
@@ -652,13 +659,20 @@ async function previewSampleBuffer() {
   return previewSamplePromise
 }
 
-/** Encode the plugin's variant of the sample with the draft settings (never skipped). */
-async function encodePluginVariant(sample, options) {
-  const facts = { width: sample.width, height: sample.height, bytes: sample.bytes, mediaType: 'image/jpeg' }
-  const hasAlpha = false
+/** An uploaded source when its id is still cached, else the bundled sample. */
+async function resolvePreviewSource(sourceId) {
+  if (typeof sourceId === 'string' && previewUploads.has(sourceId)) return previewUploads.get(sourceId)
+  return previewSampleBuffer()
+}
+
+/** Encode the plugin's variant of a source with the draft settings (never skipped). */
+async function encodePluginVariant(source, options) {
+  const facts = { width: source.width, height: source.height, bytes: source.bytes, mediaType: 'image/jpeg' }
   const target = targetFor(facts, options)
-  const format = formatFor(hasAlpha, options)
-  let base = sharp(sample.buffer, { failOn: 'error', limitInputPixels: false }).toColourspace('srgb')
+  const format = formatFor(source.hasAlpha === true, options)
+  let base = sharp(source.buffer, { failOn: 'error', limitInputPixels: PREVIEW_MAX_PIXELS })
+    .rotate()
+    .toColourspace('srgb')
   if (target.resize) {
     base = base.resize({ width: target.width, height: target.height, fit: 'inside', withoutEnlargement: true })
   }
@@ -673,7 +687,6 @@ async function encodePluginVariant(sample, options) {
     const output = await pipeline.toBuffer({ resolveWithObject: true })
     const candidate = {
       data: output.data,
-      mediaType: mediaTypeOf(format),
       bytes: output.data.length,
       width: output.info.width,
       height: output.info.height,
@@ -685,14 +698,17 @@ async function encodePluginVariant(sample, options) {
 }
 
 /** What the harness alone delivers: fit inside 2048², JPEG ladder to 1 MiB. */
-async function encodeNativeVariant(sample) {
-  const longEdge = Math.max(sample.width, sample.height)
+async function encodeNativeVariant(source) {
+  const longEdge = Math.max(source.width, source.height)
   const scale = Math.min(1, PREVIEW_NATIVE_MAX_EDGE / longEdge)
-  let base = sharp(sample.buffer, { failOn: 'error', limitInputPixels: false }).toColourspace('srgb')
+  let base = sharp(source.buffer, { failOn: 'error', limitInputPixels: PREVIEW_MAX_PIXELS })
+    .rotate()
+    .flatten({ background: '#ffffff' })
+    .toColourspace('srgb')
   if (scale < 1) {
     base = base.resize({
-      width: Math.max(1, Math.round(sample.width * scale)),
-      height: Math.max(1, Math.round(sample.height * scale)),
+      width: Math.max(1, Math.round(source.width * scale)),
+      height: Math.max(1, Math.round(source.height * scale)),
       fit: 'inside',
       withoutEnlargement: true,
     })
@@ -714,7 +730,9 @@ async function encodeNativeVariant(sample) {
 
 /** A small JPEG data URL for the card; the reported facts stay those of the variant. */
 async function previewThumbnail(buffer) {
-  const output = await sharp(buffer)
+  const output = await sharp(buffer, { limitInputPixels: PREVIEW_MAX_PIXELS })
+    .rotate()
+    .flatten({ background: '#ffffff' })
     .resize({ width: PREVIEW_THUMB_WIDTH, withoutEnlargement: true })
     .jpeg({ quality: 78 })
     .toBuffer()
@@ -722,22 +740,22 @@ async function previewThumbnail(buffer) {
 }
 
 /** Encode the three variants and pair each with its facts and thumbnail. */
-async function previewPayload(draft) {
-  const options = normalizeConfig(draft)
-  const sample = await previewSampleBuffer()
+async function previewPayload(settings, sourceId) {
+  const options = normalizeConfig(settings)
+  const source = await resolvePreviewSource(sourceId)
   const [native, plugin] = await Promise.all([
-    encodeNativeVariant(sample),
-    encodePluginVariant(sample, options),
+    encodeNativeVariant(source),
+    encodePluginVariant(source, options),
   ])
   const variants = [
-    { id: 'original', width: sample.width, height: sample.height, bytes: sample.bytes, buffer: sample.buffer },
+    { id: 'original', width: source.width, height: source.height, bytes: source.bytes, buffer: source.buffer },
     { id: 'native', width: native.width, height: native.height, bytes: native.bytes, buffer: native.data },
     { id: 'plugin', width: plugin.width, height: plugin.height, bytes: plugin.bytes, buffer: plugin.data },
   ]
   const thumbnails = await Promise.all(variants.map((variant) => previewThumbnail(variant.buffer)))
   return {
     ok: true,
-    sample: { width: sample.width, height: sample.height, bytes: sample.bytes },
+    sample: { width: source.width, height: source.height, bytes: source.bytes },
     variants: variants.map((variant, index) => ({
       id: variant.id,
       width: variant.width,
@@ -749,50 +767,86 @@ async function previewPayload(draft) {
   }
 }
 
-/** Register the preview route on the web server shown to the browser. */
-function installPreview(ctx, rawConfig) {
-  let webServer
-  try {
-    webServer = ctx.get('webServer')
-  } catch {
-    webServer = undefined
+function previewJson(res, status, payload) {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+  res.end(JSON.stringify(payload))
+}
+
+async function previewBody(req, limit) {
+  const chunks = []
+  let size = 0
+  for await (const chunk of req) {
+    size += chunk.length
+    if (size > limit) throw new Error('request body is too large')
+    chunks.push(chunk)
   }
-  if (sharp === undefined || typeof webServer?.register !== 'function') {
-    warnOnce(ctx, 'preview', 'Preview route not registered: sharp or webServer is unavailable')
+  return Buffer.concat(chunks)
+}
+
+/** Register the preview and upload routes once the web server is available. */
+function installPreview(ctx, rawConfig) {
+  if (sharp === undefined) {
+    warnOnce(ctx, 'preview', 'Preview routes are not registered because sharp is unavailable')
     return
   }
 
-  const handler = async (req, res) => {
-    const send = (status, payload) => {
-      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-      res.end(JSON.stringify(payload))
+  ctx.inject(['webServer'], (webCtx) => {
+    const webServer = webCtx.webServer
+    if (typeof webServer?.register !== 'function') {
+      warnOnce(ctx, 'preview', 'Preview routes are not registered because webServer.register is unavailable')
+      return
     }
-    try {
-      let body = ''
-      for await (const chunk of req) {
-        body += chunk
-        if (body.length > PREVIEW_BODY_LIMIT) throw new Error('preview draft is too large')
-      }
-      const draft = body === '' ? {} : JSON.parse(body)
-      if (draft === null || typeof draft !== 'object' || Array.isArray(draft)) throw new Error('preview draft must be an object')
-      const key = JSON.stringify(draft)
-      const cached = previewCache.get(key)
-      if (cached !== undefined) {
-        previewCache.delete(key)
-        previewCache.set(key, cached)
-        return send(200, cached)
-      }
-      const payload = await previewPayload({ ...rawConfig, ...draft })
-      previewCache.set(key, payload)
-      while (previewCache.size > PREVIEW_CACHE_ENTRIES) previewCache.delete(previewCache.keys().next().value)
-      return send(200, payload)
-    } catch (error) {
-      warn(ctx, `preview failed: ${error instanceof Error ? error.message : String(error)}`)
-      return send(500, { ok: false, error: 'preview unavailable' })
-    }
-  }
 
-  ctx.effect(() => webServer.register({ kind: 'exact', path: PREVIEW_ROUTE, handler }), 'read-image-compress: preview route')
+    webCtx.effect(() => webServer.register({
+      kind: 'exact',
+      path: PREVIEW_ROUTE,
+      handler: async (req, res) => {
+        try {
+          const raw = await previewBody(req, PREVIEW_BODY_LIMIT)
+          const parsed = raw.length === 0 ? {} : JSON.parse(raw.toString('utf8'))
+          const settings = parsed !== null && typeof parsed === 'object' && parsed.settings !== undefined ? parsed.settings : parsed
+          const sourceId = parsed !== null && typeof parsed === 'object' && typeof parsed.sourceId === 'string' ? parsed.sourceId : undefined
+          if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('settings must be an object')
+          const key = JSON.stringify({ sourceId: sourceId ?? null, settings })
+          const cached = previewCache.get(key)
+          if (cached !== undefined) {
+            previewCache.delete(key)
+            previewCache.set(key, cached)
+            return previewJson(res, 200, cached)
+          }
+          const payload = await previewPayload({ ...rawConfig, ...settings }, sourceId)
+          previewCache.set(key, payload)
+          while (previewCache.size > PREVIEW_CACHE_ENTRIES) previewCache.delete(previewCache.keys().next().value)
+          return previewJson(res, 200, payload)
+        } catch (error) {
+          warn(ctx, `preview failed: ${error instanceof Error ? error.message : String(error)}`)
+          return previewJson(res, 500, { ok: false, error: 'preview unavailable' })
+        }
+      },
+    }), 'read-image-compress: preview route')
+
+    webCtx.effect(() => webServer.register({
+      kind: 'exact',
+      path: PREVIEW_SOURCE_ROUTE,
+      handler: async (req, res) => {
+        try {
+          const buffer = await previewBody(req, PREVIEW_UPLOAD_LIMIT)
+          if (buffer.length === 0) throw new Error('empty upload')
+          const meta = await sharp(buffer, { failOn: 'error', limitInputPixels: PREVIEW_MAX_PIXELS }).metadata()
+          const width = meta.width
+          const height = meta.height
+          if (!isPositiveInteger(width) || !isPositiveInteger(height)) throw new Error('not a decodable image')
+          const id = randomUUID()
+          previewUploads.set(id, { buffer, width, height, bytes: buffer.length, hasAlpha: meta.hasAlpha === true })
+          while (previewUploads.size > PREVIEW_UPLOAD_ENTRIES) previewUploads.delete(previewUploads.keys().next().value)
+          return previewJson(res, 200, { ok: true, id, width, height, bytes: buffer.length })
+        } catch (error) {
+          warn(ctx, `preview upload rejected: ${error instanceof Error ? error.message : String(error)}`)
+          return previewJson(res, 400, { ok: false, error: 'image rejected' })
+        }
+      },
+    }), 'read-image-compress: preview source route')
+  })
 }
 
 //#endregion

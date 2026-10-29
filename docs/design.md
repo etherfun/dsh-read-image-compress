@@ -669,3 +669,14 @@ ctx.effect(() => webServer.register({ kind: 'exact', path: '/api/read-image-comp
 ### 16.5 局限
 
 「原生压缩」是近似：只建模请求投影（2048² / 1 MiB / 85-75-60），不重复附件入库规范化的画质损失；放大后的示例图细节偏软，画质差异主要由分辨率决定，但尺寸/字节/token 都是真实编码值。
+
+### 16.6 自定义上传（2026-10-29）
+
+- 第二个路由 `POST /api/read-image-compress/source` 接收原始图片字节，用 sharp 读元数据校验（`limitInputPixels = 64e6`、body ≤ 16 MiB），返回 `{ id, width, height, bytes }`；
+- 上传字节留在内存（最多 4 张，LRU），不落盘；`preview` 请求带 `sourceId` 时用它作为起点，否则用随包示例；
+- 卡片上方有文件输入与「恢复示例图」，上传后三列立刻按新图重算；
+- 为什么不在浏览器用 canvas：编码器不同，数字会对不上真实提交；上传只是换了输入，编码仍然在 Host 的 sharp 上跑。
+
+### 16.7 路由注册时机
+
+第一版在 `apply()` 里直接 `ctx.get('webServer')`，而插件的 inject 只有 `attachments`，组合顺序靠前时 webServer 还没就绪，于是启动日志里出现 `Preview route not registered: sharp or webServer is unavailable`。现在改成 `ctx.inject(['webServer'], (webCtx) => …)`，等服务挂载后再注册两条路由——这也是仓里 `dsh-api-remote-access`、`dsh-client-modules` 的写法。

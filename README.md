@@ -55,8 +55,13 @@ Each column shows a 560 px thumbnail, the true raster and byte size, and the
 estimated token cost. The numbers come from the Host, not the browser: the
 plugin registers `POST /api/read-image-compress/preview`, which runs the same
 `sharp` build as the hook, so the sizes match what `read_image` would commit.
-The route caches the last six drafts and reads `preview/sample.png` from the
-package.
+The route caches the last six drafts.
+
+**Bring your own photo.** `POST /api/read-image-compress/source` accepts raw
+image bytes and returns an id; the card then sends that id with each preview
+request. Four uploads stay in memory; the file input and **Use the bundled
+sample** button sit above the grid. Uploads are decoded with a 64 MP ceiling and
+a 16 MiB body limit.
 
 `summaryMode: off` is called out under the grid; `values` that are mid-edit
 (an emptied number field) simply keep the previous preview until they parse.
@@ -168,6 +173,7 @@ client.js           browser half: bundle-page settings card (plugins.bundle.conf
 cordis.patch.yml    bundle insert row and default config
 locale/{en,zh}.json bundle metadata strings
 preview/sample.png  the real photo behind the settings preview
+                    (uploads are in-memory only, never written)
 docs/design.md      architecture, contracts, and the hook rationale
 docs/benchmark.md   measured compression ratio, quality loss, and cache results
 ```

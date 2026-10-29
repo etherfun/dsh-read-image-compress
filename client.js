@@ -72,7 +72,11 @@ window.__ModuleLoader__.load({
         sectionPreview: 'Preview',
         previewHint: 'One real photo through three pipelines: as read, as the harness alone delivers it (2048² / 1 MiB), and as this plugin commits it with the settings below.',
         previewLoading: 'Rendering the preview…',
-        previewError: 'The preview endpoint is unavailable (it needs the running host and the bundled sample).',
+        previewError: 'The preview endpoint is unavailable',
+        previewUsingSample: 'Bundled sample photo',
+        previewUploaded: 'Uploaded image',
+        previewUploading: 'Uploading…',
+        previewResetSample: 'Use the bundled sample',
         previewOff: 'The footer is off, so this line will not appear when expanded.',
         variantOriginal: 'Original',
         variantNative: 'Native compression',
@@ -124,7 +128,11 @@ window.__ModuleLoader__.load({
         sectionPreview: '预览',
         previewHint: '同一张真实照片的三种结果：原图、DSH 原生压缩（2048² / 1 MiB），以及本插件按下方设置提交的版本。',
         previewLoading: '正在生成预览…',
-        previewError: '预览接口不可用（需要运行中的宿主与随包示例图）。',
+        previewError: '预览接口不可用',
+        previewUsingSample: '随包示例照片',
+        previewUploaded: '已上传的图片',
+        previewUploading: '上传中…',
+        previewResetSample: '恢复示例图',
         previewOff: '底部描述已关闭，展开时不会显示这一行。',
         variantOriginal: '原图',
         variantNative: '原生压缩',
@@ -250,6 +258,9 @@ window.__ModuleLoader__.load({
         marginBottom: '6px',
       },
       cardMeta: { fontSize: '11.5px', lineHeight: 1.45, color: 'var(--dsw-alias-label-secondary, #6b7280)' },
+      sourceRow: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', margin: '0 0 12px' },
+      fileInput: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #6b7280)' },
+      sourceLabel: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #6b7280)' },
     }
 
     function merge(value) {
@@ -287,17 +298,22 @@ window.__ModuleLoader__.load({
       }, [form, snapshot.revision])
 
       const [preview, setPreview] = React.useState({ status: 'loading', data: undefined })
+      const [source, setSource] = React.useState(undefined)
+      const [uploadBusy, setUploadBusy] = React.useState(false)
       const previewKey = JSON.stringify({
-        quality: draft.quality,
-        resolutionScale: draft.resolutionScale,
-        format: draft.format,
-        maxEdge: draft.maxEdge,
-        maxPixels: draft.maxPixels,
-        maxBytes: draft.maxBytes,
-        minResizeScale: draft.minResizeScale,
-        webpEffort: draft.webpEffort,
-        jpegBackground: draft.jpegBackground,
-        downscaleWebp: draft.downscaleWebp,
+        sourceId: source?.id ?? null,
+        settings: {
+          quality: draft.quality,
+          resolutionScale: draft.resolutionScale,
+          format: draft.format,
+          maxEdge: draft.maxEdge,
+          maxPixels: draft.maxPixels,
+          maxBytes: draft.maxBytes,
+          minResizeScale: draft.minResizeScale,
+          webpEffort: draft.webpEffort,
+          jpegBackground: draft.jpegBackground,
+          downscaleWebp: draft.downscaleWebp,
+        },
       })
       React.useEffect(() => {
         // A field being cleared mid-edit is not a request; keep the last preview.
@@ -318,7 +334,7 @@ window.__ModuleLoader__.load({
               if (data?.ok === true) setPreview({ status: 'ready', data })
             })
             .catch((failure) => {
-              if (failure?.name !== 'AbortError') setPreview({ status: 'error', data: undefined })
+              if (failure?.name !== 'AbortError') setPreview({ status: 'error', data: undefined, detail: failure instanceof Error ? failure.message : 'network error' })
             })
         }, 300)
         return () => {
@@ -373,13 +389,49 @@ window.__ModuleLoader__.load({
         h('h4', { style: styles.heading }, title),
         h('div', { style: styles.grid }, rows))
 
+      const uploadPreviewSource = async (event) => {
+        const file = event?.target?.files?.[0]
+        if (file === undefined) return
+        setUploadBusy(true)
+        setPreview({ status: 'loading', data: undefined })
+        try {
+          const bytes = await file.arrayBuffer()
+          const response = await fetch('/api/read-image-compress/source', {
+            method: 'POST',
+            headers: { 'content-type': file.type || 'application/octet-stream' },
+            body: bytes,
+          })
+          const data = await response.json().catch(() => undefined)
+          if (data?.ok !== true) throw new Error(`HTTP ${response.status}`)
+          setSource({ id: data.id, name: file.name, width: data.width, height: data.height })
+        } catch (failure) {
+          setPreview({ status: 'error', data: undefined, detail: failure instanceof Error ? failure.message : 'upload failed' })
+        } finally {
+          setUploadBusy(false)
+        }
+      }
+
       const previewSection = h('section', { style: styles.section },
         h('h4', { style: styles.heading }, t('sectionPreview')),
         h('p', { style: styles.hint }, t('previewHint')),
+        h('div', { style: styles.sourceRow },
+          h('input', {
+            id: 'ric-preview-file',
+            type: 'file',
+            accept: 'image/*',
+            style: styles.fileInput,
+            disabled: uploadBusy,
+            onChange: uploadPreviewSource,
+          }),
+          h('span', { style: styles.sourceLabel },
+            source === undefined
+              ? t('previewUsingSample')
+              : `${source.name ?? t('previewUploaded')} · ${source.width}×${source.height}`),
+          source === undefined ? null : h('button', { type: 'button', style: styles.secondary, onClick: () => setSource(undefined) }, t('previewResetSample'))),
         preview.status === 'error'
-          ? h('p', { style: styles.error }, t('previewError'))
+          ? h('p', { style: styles.error }, preview.detail === undefined ? t('previewError') : `${t('previewError')}（${preview.detail}）`)
           : preview.data === undefined
-            ? h('p', { style: styles.hint }, t('previewLoading'))
+            ? h('p', { style: styles.hint }, uploadBusy ? t('previewUploading') : t('previewLoading'))
             : h(PreviewGrid, { t, data: preview.data }),
         draft.summaryMode === 'off' ? h('p', { style: styles.hint }, t('previewOff')) : null)
 
