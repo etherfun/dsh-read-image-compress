@@ -658,7 +658,7 @@ async function previewSampleBuffer() {
         .resize({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT, fit: 'cover', position: 'centre' })
         .jpeg({ quality: 92 })
         .toBuffer({ resolveWithObject: true })
-      previewSample = { buffer: data, width: info.width, height: info.height, bytes: data.length, hasAlpha: false }
+      previewSample = { buffer: data, width: info.width, height: info.height, bytes: data.length, hasAlpha: false, mediaType: 'image/jpeg' }
       return previewSample
     })().catch((error) => {
       previewSamplePromise = undefined
@@ -764,7 +764,7 @@ async function previewPayload(settings, sourceId) {
   const thumbnails = await Promise.all(variants.map((variant) => previewThumbnail(variant.buffer, PREVIEW_THUMB_WIDTH, 78)))
   const viewKey = randomUUID()
   previewViews.set(viewKey, {
-    original: { buffer: source.buffer, mediaType: source.mediaType ?? 'image/png' },
+    original: { buffer: source.buffer, mediaType: source.mediaType ?? 'image/jpeg' },
     native: { buffer: native.data, mediaType: 'image/jpeg' },
     plugin: { buffer: plugin.data, mediaType: plugin.mediaType ?? 'image/jpeg' },
   })
