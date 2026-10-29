@@ -56,8 +56,13 @@ window.__ModuleLoader__.load({
       const { width, height } = SAMPLE
       const longEdge = Math.max(width, height)
       const area = width * height
-      const maxPixels = Number(draft.maxPixels) > 0 ? Number(draft.maxPixels) : MAX_BILLED_PIXELS
-      const scale = Math.min(1, Number(draft.resolutionScale) || 1, Number(draft.maxEdge) / longEdge, Math.sqrt(maxPixels / area))
+      const maxPixels = Number(draft.maxPixels)
+      const maxEdge = Number(draft.maxEdge)
+      const resolutionScale = Number(draft.resolutionScale)
+      // A field the person is midway through clearing is not a target; keep the
+      // sample untouched until it parses again.
+      if (!(maxPixels > 0) || !(maxEdge > 0) || !(resolutionScale > 0)) return { width, height }
+      const scale = Math.min(1, resolutionScale, maxEdge / longEdge, Math.sqrt(maxPixels / area))
       if (!(scale < 1 && scale <= Number(draft.minResizeScale))) return { width, height }
       return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
     }
