@@ -73,7 +73,7 @@ pipelines, side by side, on every draft change (debounced):
 |---|---|
 | 原图 / Original | the sample as read: 3200×2000, JPEG q92 |
 | 原生压缩 / Native | what the harness alone delivers — fit inside 2048², JPEG quality ladder down to 1 MiB |
-| 插件压缩 / This plugin | the same photo encoded with the current `maxEdge` / `maxPixels` / `resolutionScale` / `format` / `quality` |
+| 插件压缩 / This plugin | the same photo encoded with the current `maxEdge` / `maxPixels` / `resolutionScale` / `format` / `quality` — and with both stages off it is the source untouched, labelled as a passthrough, because nothing would be committed |
 
 Each column shows a 560 px thumbnail, the true raster and byte size, and the
 estimated token cost. The numbers come from the Host, not the browser: the

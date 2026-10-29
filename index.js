@@ -899,14 +899,18 @@ async function previewThumbnail(buffer, width, quality) {
 async function previewPayload(settings, sourceId) {
   const options = normalizeConfig(settings)
   const source = await resolvePreviewSource(sourceId)
-  const [native, plugin] = await Promise.all([
+  // With both stages off the hook commits nothing, so the third column is the
+  // source itself rather than a re-encode nobody would ever receive.
+  const passthrough = !options.compressResolution && !options.compressBitrate
+  const [native, encoded] = await Promise.all([
     encodeNativeVariant(source),
-    encodePluginVariant(source, options),
+    passthrough ? undefined : encodePluginVariant(source, options),
   ])
+  const plugin = encoded ?? { data: source.buffer, width: source.width, height: source.height, mediaType: source.mediaType ?? 'image/jpeg' }
   const variants = [
     { id: 'original', width: source.width, height: source.height, bytes: source.bytes, buffer: source.buffer },
     { id: 'native', width: native.width, height: native.height, bytes: native.bytes, buffer: native.data },
-    { id: 'plugin', width: plugin.width, height: plugin.height, bytes: plugin.bytes, buffer: plugin.data },
+    { id: 'plugin', width: plugin.width, height: plugin.height, bytes: plugin.data.length, buffer: plugin.data },
   ]
   const thumbnails = await Promise.all(variants.map((variant) => previewThumbnail(variant.buffer, PREVIEW_THUMB_WIDTH, 78)))
   const viewKey = randomUUID()
@@ -920,6 +924,7 @@ async function previewPayload(settings, sourceId) {
     ok: true,
     cap: IMAGE_TOKEN_CAP,
     viewKey,
+    passthrough,
     sample: { width: source.width, height: source.height, bytes: source.bytes },
     variants: variants.map((variant, index) => {
       const tokens = estimateTokens(variant.width, variant.height)

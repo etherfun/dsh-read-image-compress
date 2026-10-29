@@ -66,11 +66,12 @@ window.__ModuleLoader__.load({
     }
 
     function PreviewGrid({ t, data, onOpen }) {
+      const label = (id) => id === 'plugin' && data.passthrough === true ? t('variantPluginOff') : t(VARIANT_LABEL_KEYS[id])
       return h('div', { style: styles.cards }, data.variants.map((variant) => h('figure', { key: variant.id, style: styles.card },
-        h('figcaption', { style: styles.cardTitle }, t(VARIANT_LABEL_KEYS[variant.id])),
+        h('figcaption', { style: styles.cardTitle }, label(variant.id)),
         h('img', {
           src: variant.thumbnail,
-          alt: t(VARIANT_LABEL_KEYS[variant.id]),
+          alt: label(variant.id),
           title: t('previewZoomHint'),
           style: styles.cardImage,
           onClick: () => onOpen?.(variant),
@@ -226,6 +227,7 @@ window.__ModuleLoader__.load({
         variantOriginal: 'Original',
         variantNative: 'Native compression',
         variantPlugin: 'This plugin',
+        variantPluginOff: 'This plugin (both modes off)',
         enabled: 'Enable compression',
         modeResolution: 'Compress resolution',
         modeBitrate: 'Compress bitrate',
@@ -295,6 +297,7 @@ window.__ModuleLoader__.load({
         variantOriginal: '原图',
         variantNative: '原生压缩',
         variantPlugin: '插件压缩',
+        variantPluginOff: '插件压缩（两个模式都关闭）',
         enabled: '启用压缩',
         modeResolution: '压缩分辨率',
         modeBitrate: '压缩码率',
