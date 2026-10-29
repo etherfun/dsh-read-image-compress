@@ -20,6 +20,8 @@ window.__ModuleLoader__.load({
 
     const DEFAULTS = Object.freeze({
       enabled: true,
+      compressResolution: true,
+      compressBitrate: true,
       quality: 85,
       resolutionScale: 1,
       format: 'auto',
@@ -225,6 +227,12 @@ window.__ModuleLoader__.load({
         variantNative: 'Native compression',
         variantPlugin: 'This plugin',
         enabled: 'Enable compression',
+        modeResolution: 'Compress resolution',
+        modeBitrate: 'Compress bitrate',
+        modeResolutionHint: 'Shrink the raster to the long-edge and pixel budget. Fewer pixels also means fewer image tokens.',
+        modeBitrateHint: 'Re-encode down the quality ladder until the image fits the target bytes. Off keeps full fidelity — the source codec at quality 100, PNG lossless — so only the pixel count changes.',
+        modeNone: 'Both modes are off: read_image results are stored exactly as read.',
+        formatFidelityHint: 'While the bitrate mode is off, Auto keeps the source codec, so a PNG stays lossless.',
         quality: 'Quality (1–100)',
         resolutionScale: 'Resolution scale (0.1–1)',
         format: 'Output format',
@@ -288,6 +296,12 @@ window.__ModuleLoader__.load({
         variantNative: '原生压缩',
         variantPlugin: '插件压缩',
         enabled: '启用压缩',
+        modeResolution: '压缩分辨率',
+        modeBitrate: '压缩码率',
+        modeResolutionHint: '把长边与总像素降到上限内。像素变少，图片占用的 token 也随之下降。',
+        modeBitrateHint: '沿质量阶梯重新编码，直到落入目标字节。关闭后保持最高保真度 —— 沿用源编码、质量 100，PNG 无损 —— 所以只有像素数会变。',
+        modeNone: '两个模式都关闭：read_image 的结果会原样保存。',
+        formatFidelityHint: '码率压缩关闭时，「自动」沿用源编码，PNG 仍是无损。',
         quality: '质量（1–100）',
         resolutionScale: '分辨率缩放（0.1–1）',
         format: '输出格式',
@@ -357,6 +371,24 @@ window.__ModuleLoader__.load({
         font: 'inherit',
       },
       checkRow: { display: 'flex', alignItems: 'center', gap: '8px' },
+      modeLabel: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '7px',
+        cursor: 'pointer',
+        fontSize: '12.5px',
+        letterSpacing: 0,
+        color: 'var(--dsw-alias-label-primary, #1f2328)',
+      },
+      gridOff: { opacity: 0.45 },
+      warn: {
+        margin: '0 0 12px',
+        padding: '7px 10px',
+        borderRadius: '6px',
+        border: '1px solid var(--dsw-alias-warning, #9a6700)',
+        color: 'var(--dsw-alias-warning, #9a6700)',
+        fontSize: '12px',
+      },
       actions: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px', flexWrap: 'wrap' },
       primary: {
         padding: '6px 14px',
@@ -494,6 +526,8 @@ window.__ModuleLoader__.load({
       const previewKey = JSON.stringify({
         sourceId: source?.id ?? null,
         settings: {
+          compressResolution: draft.compressResolution,
+          compressBitrate: draft.compressBitrate,
           quality: draft.quality,
           resolutionScale: draft.resolutionScale,
           format: draft.format,
@@ -580,6 +614,20 @@ window.__ModuleLoader__.load({
         h('h4', { style: styles.heading }, title),
         h('div', { style: styles.grid }, rows))
 
+      /** A stage of the pipeline: its own checkbox in the heading, its knobs below. */
+      const modeSection = ({ key, id, title, hint, rows }) => h('section', { style: styles.section },
+        h('h4', { style: styles.heading },
+          h('label', { htmlFor: id, style: styles.modeLabel },
+            h('input', {
+              id,
+              type: 'checkbox',
+              checked: draft[key] === true,
+              onChange: (event) => set(key)(event.target.checked),
+            }),
+            h('span', null, title))),
+        h('p', { style: styles.hint }, hint),
+        h('div', { style: draft[key] === true ? styles.grid : { ...styles.grid, ...styles.gridOff } }, rows))
+
       const uploadPreviewSource = async (event) => {
         const file = event?.target?.files?.[0]
         if (file === undefined) return
@@ -635,15 +683,17 @@ window.__ModuleLoader__.load({
         h('p', { style: styles.hint }, t('previewTokenHint')),
         draft.summaryMode === 'off' ? h('p', { style: styles.hint }, t('previewOff')) : null)
 
+      const bothModesOff = draft.enabled === true && draft.compressResolution !== true && draft.compressBitrate !== true
+
       return h('div', { style: styles.root },
         h('p', { style: styles.hint }, t('saveHint')),
+        bothModesOff ? h('p', { style: styles.warn }, t('modeNone')) : null,
         h('p', { style: styles.example }, t('footerExample')),
 
         section(t('sectionQuick'), [
           h(Field, { key: 'enabled', id: 'ric-enabled', label: t('enabled') },
             h('div', { style: styles.checkRow },
               h('input', { id: 'ric-enabled', type: 'checkbox', checked: draft.enabled, onChange: (e) => set('enabled')(e.target.checked) }))),
-          h(NumberField, { key: 'quality', id: 'ric-quality', label: t('quality'), value: draft.quality, min: 1, max: 100, step: 1, onChange: setNumber('quality') }),
           h(Field, { key: 'format', id: 'ric-format', label: t('format') },
             h('select', {
               id: 'ric-format', value: draft.format, style: styles.input,
@@ -663,7 +713,9 @@ window.__ModuleLoader__.load({
                   onChange: (e) => set('jpegBackground')(e.target.value),
                 }))
             : null,
-          h(NumberField, { key: 'resolutionScale', id: 'ric-scale', label: t('resolutionScale'), value: draft.resolutionScale, min: 0.1, max: 1, step: 0.05, onChange: setNumber('resolutionScale') }),
+          draft.compressBitrate === false
+            ? h('p', { key: 'format-fidelity', style: { ...styles.hint, margin: 0, gridColumn: '1 / -1' } }, t('formatFidelityHint'))
+            : null,
           h(Field, { key: 'summaryMode', id: 'ric-summary-mode', label: t('summaryMode') },
             h('select', {
               id: 'ric-summary-mode', value: draft.summaryMode, style: styles.input,
@@ -681,12 +733,32 @@ window.__ModuleLoader__.load({
               h('option', { value: 'en' }, t('languageEn')))),
         ]),
 
+        modeSection({
+          key: 'compressResolution',
+          id: 'ric-mode-resolution',
+          title: t('modeResolution'),
+          hint: t('modeResolutionHint'),
+          rows: [
+            h(NumberField, { key: 'resolutionScale', id: 'ric-scale', label: t('resolutionScale'), value: draft.resolutionScale, min: 0.1, max: 1, step: 0.05, onChange: setNumber('resolutionScale') }),
+            h(NumberField, { key: 'maxEdge', id: 'ric-max-edge', label: t('maxEdge'), value: draft.maxEdge, min: 64, max: 8192, step: 1, onChange: setNumber('maxEdge') }),
+            h(NumberField, { key: 'maxPixels', id: 'ric-max-pixels', label: t('maxPixels'), value: Math.round(Number(draft.maxPixels) / 10000) / 100, min: 0.01, step: 0.01, onChange: setMegapixels('maxPixels') }),
+            h(NumberField, { key: 'minResizeScale', id: 'ric-min-resize', label: t('minResizeScale'), value: draft.minResizeScale, min: 0.1, max: 1, step: 0.05, onChange: setNumber('minResizeScale') }),
+          ],
+        }),
+
+        modeSection({
+          key: 'compressBitrate',
+          id: 'ric-mode-bitrate',
+          title: t('modeBitrate'),
+          hint: t('modeBitrateHint'),
+          rows: [
+            h(NumberField, { key: 'quality', id: 'ric-quality', label: t('quality'), value: draft.quality, min: 1, max: 100, step: 1, onChange: setNumber('quality') }),
+            h(NumberField, { key: 'maxBytes', id: 'ric-max-bytes', label: t('maxBytes'), value: Math.round(Number(draft.maxBytes) / 1024), min: 1, step: 1, onChange: setKib('maxBytes') }),
+          ],
+        }),
+
         section(t('sectionAdvanced'), [
-          h(NumberField, { key: 'maxEdge', id: 'ric-max-edge', label: t('maxEdge'), value: draft.maxEdge, min: 64, max: 8192, step: 1, onChange: setNumber('maxEdge') }),
-          h(NumberField, { key: 'maxPixels', id: 'ric-max-pixels', label: t('maxPixels'), value: Math.round(Number(draft.maxPixels) / 10000) / 100, min: 0.01, step: 0.01, onChange: setMegapixels('maxPixels') }),
-          h(NumberField, { key: 'maxBytes', id: 'ric-max-bytes', label: t('maxBytes'), value: Math.round(Number(draft.maxBytes) / 1024), min: 1, step: 1, onChange: setKib('maxBytes') }),
           h(NumberField, { key: 'minBytes', id: 'ric-min-bytes', label: t('minBytes'), value: Math.round(Number(draft.minBytes) / 1024), min: 0, step: 1, onChange: setKib('minBytes') }),
-          h(NumberField, { key: 'minResizeScale', id: 'ric-min-resize', label: t('minResizeScale'), value: draft.minResizeScale, min: 0.1, max: 1, step: 0.05, onChange: setNumber('minResizeScale') }),
           h(NumberField, { key: 'cacheEntries', id: 'ric-cache', label: t('cacheEntries'), value: draft.cacheEntries, min: 0, max: 4096, step: 1, onChange: setNumber('cacheEntries') }),
           h(Field, { key: 'downscaleWebp', id: 'ric-downscale-webp', label: t('downscaleWebp') },
             h('div', { style: styles.checkRow },

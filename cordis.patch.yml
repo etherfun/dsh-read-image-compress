@@ -3,6 +3,8 @@
       name: '@local/dsh-read-image-compress'
       config:
         enabled: true
+        compressResolution: true
+        compressBitrate: true
         quality: 85
         resolutionScale: 1
         format: auto

@@ -1,8 +1,8 @@
 {
   "name": "@local/dsh-read-image-compress",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
-  "description": "Compress read_image results before they enter the session: downscale pixels, choose JPEG/WebP/PNG, tune quality from the Plugins page, and print an original/compressed/ratio footer under the image.",
+  "description": "Compress read_image results before they enter the session: switch pixel downscaling and quality/byte compression on independently, choose JPEG/WebP/PNG, tune it from the Plugins page, and print an original/compressed/ratio footer under the image.",
   "type": "module",
   "main": "index.js",
   "exports": {

@@ -6,8 +6,9 @@ the row on the **Plugins** sidebar page.
 
 For a successful `read_image` result it:
 
-1. reads the stored attachment and encodes it with the installation's own
-   `sharp`/libvips (`quality`, `format`, `resolutionScale`, byte target);
+1. reads the stored attachment and runs the two stages whose switches are on —
+   resolution (`maxEdge`, `maxPixels`, `resolutionScale`) and bitrate (`quality`
+   down toward `maxBytes`) — with the installation's own `sharp`/libvips;
 2. commits the derived bytes with `ctx.attachments.saveImage()`;
 3. replaces the result **content** — the recognized image envelope, the image
    block pointing at the smaller attachment, and a trailing footer text block —
@@ -17,6 +18,22 @@ For a successful `read_image` result it:
 If Sharp cannot be resolved from the running installation, it falls back to
 `ctx.attachments.readImageRequest()`; the plugin still compresses, but the
 `quality` and `format` settings are ignored in that mode.
+
+## Two modes, two switches
+
+The pipeline is two independent stages, each with its own checkbox on the
+settings card. Every combination is valid:
+
+| Resolution | Bitrate | What happens |
+|---|---|---|
+| on | on | Downscale to the budget **and** walk the quality ladder into `maxBytes`. The default, and the smallest files. |
+| on | off | Downscale only. With `format: auto` the source codec is kept, so a PNG is re-encoded lossless and JPEG/WebP stay JPEG/WebP; the ladder starts at quality 100 with 4:4:4 chroma instead of `quality`, and only steps down when quality 100 would hand back a *heavier* file than the source. `maxBytes` is ignored, and bytes never grow. |
+| off | on | No pixel is touched: the original raster is re-encoded down the ladder into `maxBytes`. Use it when detail must survive but the file is enormous. |
+| off | off | Nothing runs — `read_image` results are stored exactly as read. The card says so, and the hook returns before decoding anything. |
+
+Resolution is what a model is billed for: the token estimate follows the pixel
+count, not the byte count. So the resolution stage is the one that lowers cost,
+while the bitrate stage is what makes the file cheap to transfer and decode.
 
 ## The footer line
 
@@ -120,6 +137,8 @@ second-level **Configure** page — and saves as one atomic mutation; the next
 - id: read-image-compress
   config:
     enabled: true
+    compressResolution: true
+    compressBitrate: true
     quality: 85
     resolutionScale: 1
     format: auto
@@ -140,6 +159,8 @@ second-level **Configure** page — and saves as one atomic mutation; the next
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | Stop post-processing without removing the plugin. |
+| `compressResolution` | `true` | Resolution stage. Off means no resize at all, whatever `maxEdge`/`maxPixels`/`resolutionScale` say. |
+| `compressBitrate` | `true` | Bitrate stage. Off means no byte trade: the source codec at quality 100, stepping down only to stay at or below the source bytes; `quality` and `maxBytes` are ignored. |
 | `quality` | `85` | 1–100 for JPEG/WebP. Lower is smaller. PNG ignores it. |
 | `resolutionScale` | `1` | Extra long-edge scale relative to the source, 0.1–1. Combined with `maxEdge` via the smaller target. |
 | `format` | `auto` | `auto` (WebP for alpha, JPEG otherwise), `jpeg`, `webp`, or `png`. |
@@ -168,6 +189,12 @@ plugin on the next `read_image` call without a reload.
   `auto` keeps WebP for alpha.
 - `format: png` is lossless; `maxBytes` and `quality` do not shrink it. It is
   useful only when lossless output is required.
+- Measured on a real encoder (libvips 8.18.7), a 3200×2000 source: with both
+  stages on, a 12.2 MB PNG became a 65.7 KB JPEG at 1568×980. Resolution only
+  kept it lossless at 2.02 MB (pixel-identical to a plain resize). Bitrate only
+  left the raster at 3200×2000 and came out at 433 KB. On an already-compressed
+  539 KB JPEG q78, resolution only committed 133 KB at 1568×980 on the quality
+  90 rung — higher fidelity than the source, still smaller.
 - Only new `read_image` calls are affected; existing attachments and history are
   immutable.
 - The hook adds one decode+encode pass per compressed read. The in-memory cache

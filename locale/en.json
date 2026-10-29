@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Read Image Compression",
-    "description": "Downscale and re-encode read_image results with configurable quality, resolution, and output format, plus a footer showing the original and compressed size and the ratio."
+    "description": "Two independent switches — resolution and bitrate — downscale and re-encode read_image results, with a footer showing the original and compressed size and the ratio."
   }
 }

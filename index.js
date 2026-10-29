@@ -75,6 +75,8 @@ const Schema = loadSchema()
 /** The settings schema the Plugins page renders for this row. */
 export const Config = Schema === undefined ? undefined : Schema.object({
   enabled: Schema.boolean().default(true).volatile(),
+  compressResolution: Schema.boolean().default(true).volatile(),
+  compressBitrate: Schema.boolean().default(true).volatile(),
   quality: Schema.number().min(1).max(100).default(85).volatile(),
   resolutionScale: Schema.number().min(0.1).max(1).default(1).volatile(),
   format: Schema.string().default('auto').volatile(),
@@ -98,6 +100,8 @@ const SUMMARY_LANGUAGES = new Set(['zh', 'en'])
 
 const DEFAULTS = Object.freeze({
   enabled: true,
+  compressResolution: true,
+  compressBitrate: true,
   quality: 85,
   resolutionScale: 1,
   format: 'auto',
@@ -147,6 +151,13 @@ function normalizeConfig(raw) {
   const enabled = readValue(config.enabled, DEFAULTS.enabled)
   if (typeof enabled !== 'boolean') throw new Error('read-image-compress: enabled must be a boolean')
 
+  // Two independent stages. Either one may be switched off on its own; with
+  // both off the hook stores results unchanged.
+  const compressResolution = readValue(config.compressResolution, DEFAULTS.compressResolution)
+  const compressBitrate = readValue(config.compressBitrate, DEFAULTS.compressBitrate)
+  if (typeof compressResolution !== 'boolean') throw new Error('read-image-compress: compressResolution must be a boolean')
+  if (typeof compressBitrate !== 'boolean') throw new Error('read-image-compress: compressBitrate must be a boolean')
+
   const quality = integer(readValue(config.quality, DEFAULTS.quality), 'quality', 1, 100)
   const resolutionScale = numberInRange(readValue(config.resolutionScale, DEFAULTS.resolutionScale), 'resolutionScale', 0.1, 1)
   const maxEdge = integer(readValue(config.maxEdge, DEFAULTS.maxEdge), 'maxEdge', 64, 8192)
@@ -181,6 +192,8 @@ function normalizeConfig(raw) {
 
   return {
     enabled,
+    compressResolution,
+    compressBitrate,
     quality,
     resolutionScale,
     format,
@@ -221,8 +234,29 @@ function mediaTypeOf(format) {
   return format === 'jpeg' ? 'image/jpeg' : format === 'webp' ? 'image/webp' : 'image/png'
 }
 
-function formatFor(hasAlpha, options) {
+/**
+ * The two switches stage the work independently:
+ *
+ * - resolution: shrink the raster to the long-edge / pixel budget.
+ * - bitrate:    walk the quality ladder until the bytes fit `maxBytes`.
+ *
+ * With the bitrate stage off the encoder keeps full fidelity — the source codec
+ * (PNG stays lossless, WebP stays WebP) at quality 100 with 4:4:4 chroma — and
+ * `maxBytes` is ignored, so the pixel count is the only thing that changes, and
+ * with it the token cost. With the resolution stage off nothing is resized and
+ * only the quality/byte trade happens.
+ */
+const FIDELITY_QUALITY = 100
+
+function formatFor(hasAlpha, options, sourceMediaType) {
   if (options.format !== 'auto') return options.format
+  // Converting a lossless source to JPEG would be a bitrate trade after all, so
+  // the fidelity-only path keeps the source codec family.
+  if (!options.compressBitrate) {
+    if (sourceMediaType === 'image/jpeg') return 'jpeg'
+    if (sourceMediaType === 'image/webp') return 'webp'
+    if (sourceMediaType === 'image/png') return 'png'
+  }
   return hasAlpha ? 'webp' : 'jpeg'
 }
 
@@ -234,6 +268,9 @@ function formatFor(hasAlpha, options) {
  * tokens than the ~1300×1300 budget we target by default.
  */
 function targetFor(image, options) {
+  if (!options.compressResolution) {
+    return { width: image.width, height: image.height, scale: 1, resize: false }
+  }
   const longEdge = Math.max(image.width, image.height)
   const area = image.width * image.height
   const edgeScale = Math.min(1, options.maxEdge / longEdge)
@@ -257,44 +294,58 @@ function shouldSkip(image, target, hasAlpha, options) {
   } else if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)) {
     return true
   }
-  if (!target.resize && image.bytes < options.minBytes) return true
-  if (image.mediaType === 'image/webp' && !options.downscaleWebp && !target.resize) return true
 
-  const desiredType = mediaTypeOf(formatFor(hasAlpha, options))
-  if (!target.resize && image.mediaType === desiredType && image.bytes <= options.maxBytes) return true
+  const desiredType = mediaTypeOf(formatFor(hasAlpha, options, image.mediaType))
+  const formatChange = options.format !== 'auto' && image.mediaType !== desiredType
+  if (!target.resize) {
+    // Without a resize the resolution stage has nothing left to do, so only the
+    // bitrate stage (or an explicit format change) can still act on the image.
+    if (!options.compressBitrate) return !formatChange
+    if (image.bytes < options.minBytes) return true
+    if (image.mediaType === 'image/webp' && !options.downscaleWebp) return true
+    if (image.mediaType === desiredType && image.bytes <= options.maxBytes) return true
+  }
   return false
 }
 
-function qualitySteps(quality) {
+function qualitySteps(quality, step = 10) {
   const steps = []
-  for (let value = quality; value >= 40; value -= 10) steps.push(value)
+  for (let value = quality; value >= 40; value -= step) steps.push(value)
   if (steps.length === 0) steps.push(quality)
   return [...new Set(steps)]
 }
 
-async function encodeSharp(ctx, image, options, signal) {
-  const stored = await ctx.attachments.readImage(image, signal)
-  if (stored?.data === undefined) return { skipped: true }
-  const metadata = await sharp(stored.data).metadata()
-  const hasAlpha = metadata.hasAlpha === true
-  const target = targetFor(image, options)
-  if (shouldSkip(image, target, hasAlpha, options)) return { skipped: true }
-
-  const format = formatFor(hasAlpha, options)
-  let base = sharp(stored.data, { failOn: 'error', limitInputPixels: false })
-    .rotate()
-    .toColourspace('srgb')
-  if (target.resize) {
-    base = base.resize({ width: target.width, height: target.height, fit: 'inside', withoutEnlargement: true })
+/**
+ * The ladder and its byte ceiling for one encode. With the bitrate stage off the
+ * ceiling is not `maxBytes` (that is a bitrate knob) but the source itself: start
+ * at full fidelity and only step down when quality 100 would hand back a heavier
+ * file than the image came in as. So the rule is "fidelity first, never bigger".
+ */
+function encodePlan(options, sourceBytes) {
+  if (!options.compressBitrate) {
+    return { qualities: qualitySteps(FIDELITY_QUALITY), budget: Math.max(1024, sourceBytes - 1) }
   }
-  if (format === 'jpeg') base = base.flatten({ background: options.jpegBackground })
+  return { qualities: qualitySteps(options.quality), budget: options.maxBytes }
+}
 
+/** Encode one prepared raster through the ladder, keeping the smallest result. */
+async function encodeBest(base, format, plan, options) {
   let best
-  for (const quality of format === 'png' ? [null] : qualitySteps(options.quality)) {
+  for (const quality of format === 'png' ? [null] : plan.qualities) {
     let pipeline = base.clone()
-    if (format === 'jpeg') pipeline = pipeline.jpeg({ quality })
-    else if (format === 'webp') pipeline = pipeline.webp({ quality, effort: options.webpEffort })
-    else pipeline = pipeline.png({ compressionLevel: 9, bitdepth: 8 })
+    if (format === 'jpeg') {
+      pipeline = quality === FIDELITY_QUALITY
+        // 4:4:4 keeps chroma intact when the byte trade is deliberately off.
+        ? pipeline.jpeg({ quality, chromaSubsampling: '4:4:4' })
+        : pipeline.jpeg({ quality })
+    } else if (format === 'webp') {
+      pipeline = quality === FIDELITY_QUALITY
+        // 4:4:0 chroma is the highest-fidelity lossy subsampling WebP offers.
+        ? pipeline.webp({ quality, effort: options.webpEffort, smartSubsample: true })
+        : pipeline.webp({ quality, effort: options.webpEffort })
+    } else {
+      pipeline = pipeline.png({ compressionLevel: 9, bitdepth: 8 })
+    }
     const output = await pipeline.toBuffer({ resolveWithObject: true })
     const candidate = {
       data: output.data,
@@ -305,14 +356,40 @@ async function encodeSharp(ctx, image, options, signal) {
       quality,
     }
     if (best === undefined || candidate.bytes < best.bytes) best = candidate
-    if (format === 'png' || candidate.bytes <= options.maxBytes) break
+    if (format === 'png' || candidate.bytes <= plan.budget) break
   }
+  return best
+}
+
+async function encodeSharp(ctx, image, options, signal) {
+  const stored = await ctx.attachments.readImage(image, signal)
+  if (stored?.data === undefined) return { skipped: true }
+  const metadata = await sharp(stored.data).metadata()
+  const hasAlpha = metadata.hasAlpha === true
+  const target = targetFor(image, options)
+  if (shouldSkip(image, target, hasAlpha, options)) return { skipped: true }
+
+  const format = formatFor(hasAlpha, options, image.mediaType)
+  let base = sharp(stored.data, { failOn: 'error', limitInputPixels: false })
+    .rotate()
+    .toColourspace('srgb')
+  if (target.resize) {
+    base = base.resize({ width: target.width, height: target.height, fit: 'inside', withoutEnlargement: true })
+  }
+  if (format === 'jpeg') base = base.flatten({ background: options.jpegBackground })
+
+  const best = await encodeBest(base, format, encodePlan(options, image.bytes), options)
   return best === undefined ? { skipped: true } : { encoded: best }
 }
 
 async function encodeFallback(ctx, image, options, signal) {
   const target = targetFor(image, options)
-  const maxBytes = Math.min(options.maxBytes, Math.max(1, image.bytes - 1))
+  // The store encoder can only be asked for a byte ceiling; without the bitrate
+  // stage the ceiling stays at the source size, so it is never asked to trade
+  // quality it was not told to trade.
+  const maxBytes = options.compressBitrate
+    ? Math.min(options.maxBytes, Math.max(1, image.bytes - 1))
+    : Math.max(1, image.bytes)
   const version = await ctx.attachments.readImageRequest(image, { width: target.width, height: target.height, maxBytes }, signal)
   if (version === undefined || !isPositiveInteger(version.bytes)) return undefined
   return {
@@ -329,6 +406,8 @@ const cache = new Map()
 function cacheKey(image, options) {
   return [
     image.attachmentId,
+    options.compressResolution,
+    options.compressBitrate,
     options.quality,
     options.resolutionScale,
     options.format,
@@ -395,6 +474,7 @@ async function compressImage(ctx, image, options, signal) {
   if (!isPositiveInteger(image.width) || !isPositiveInteger(image.height)) return undefined
   if (!isPositiveInteger(image.bytes)) return undefined
   if (typeof image.mediaType !== 'string') return undefined
+  if (!options.compressResolution && !options.compressBitrate) return undefined
   if (image.mediaType === 'image/gif' && options.skipGif) return undefined
 
   const key = cacheKey(image, options)
@@ -654,11 +734,13 @@ function summaryLine(image, replacement, source, options) {
   if (compressedFormat !== sourceFormat && compressedFormat !== '') compressedParts.push(compressedFormat)
 
   const details = []
-  if (bytesDelta !== undefined && Number.isFinite(bytesDelta)) {
+  // A stage that did not move (resolution-only keeps every pixel count, say)
+  // would only add `↓0.0%` noise, so skip deltas below one tenth of a percent.
+  if (bytesDelta !== undefined && Number.isFinite(bytesDelta) && Math.abs(bytesDelta) >= 0.05) {
     const arrow = bytesDelta >= 0 ? '↓' : '↑'
     details.push(zh ? `体积 ${arrow}${Math.abs(bytesDelta).toFixed(1)}%` : `bytes ${arrow}${Math.abs(bytesDelta).toFixed(1)}%`)
   }
-  if (resolutionDelta !== undefined && Number.isFinite(resolutionDelta)) {
+  if (resolutionDelta !== undefined && Number.isFinite(resolutionDelta) && Math.abs(resolutionDelta) >= 0.05) {
     const arrow = resolutionDelta >= 0 ? '↓' : '↑'
     details.push(zh ? `分辨率 ${arrow}${Math.abs(resolutionDelta).toFixed(1)}%` : `resolution ${arrow}${Math.abs(resolutionDelta).toFixed(1)}%`)
   }
@@ -758,9 +840,9 @@ async function resolvePreviewSource(sourceId) {
 
 /** Encode the plugin's variant of a source with the draft settings (never skipped). */
 async function encodePluginVariant(source, options) {
-  const facts = { width: source.width, height: source.height, bytes: source.bytes, mediaType: 'image/jpeg' }
+  const facts = { width: source.width, height: source.height, bytes: source.bytes, mediaType: source.mediaType ?? 'image/jpeg' }
   const target = targetFor(facts, options)
-  const format = formatFor(source.hasAlpha === true, options)
+  const format = formatFor(source.hasAlpha === true, options, facts.mediaType)
   let base = sharp(source.buffer, { failOn: 'error', limitInputPixels: PREVIEW_MAX_PIXELS })
     .rotate()
     .toColourspace('srgb')
@@ -768,24 +850,7 @@ async function encodePluginVariant(source, options) {
     base = base.resize({ width: target.width, height: target.height, fit: 'inside', withoutEnlargement: true })
   }
   if (format === 'jpeg') base = base.flatten({ background: options.jpegBackground })
-
-  let best
-  for (const quality of format === 'png' ? [null] : qualitySteps(options.quality)) {
-    let pipeline = base.clone()
-    if (format === 'jpeg') pipeline = pipeline.jpeg({ quality })
-    else if (format === 'webp') pipeline = pipeline.webp({ quality, effort: options.webpEffort })
-    else pipeline = pipeline.png({ compressionLevel: 9, bitdepth: 8 })
-    const output = await pipeline.toBuffer({ resolveWithObject: true })
-    const candidate = {
-      data: output.data,
-      bytes: output.data.length,
-      width: output.info.width,
-      height: output.info.height,
-    }
-    if (best === undefined || candidate.bytes < best.bytes) best = candidate
-    if (format === 'png' || candidate.bytes <= options.maxBytes) break
-  }
-  return best
+  return encodeBest(base, format, encodePlan(options, facts.bytes), options)
 }
 
 /** What the harness alone delivers: fit inside 2048², JPEG ladder to 1 MiB. */
