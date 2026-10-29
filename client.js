@@ -24,6 +24,7 @@ window.__ModuleLoader__.load({
       resolutionScale: 1,
       format: 'auto',
       maxEdge: 1568,
+      maxPixels: 1690000,
       maxBytes: 524288,
       minBytes: 131072,
       minResizeScale: 0.9,
@@ -52,6 +53,7 @@ window.__ModuleLoader__.load({
         formatWebp: 'WebP',
         formatPng: 'PNG (lossless)',
         maxEdge: 'Maximum long edge (px)',
+        maxPixels: 'Pixel budget (megapixels)',
         maxBytes: 'Target bytes (KiB)',
         minBytes: 'Skip images below (KiB)',
         minResizeScale: 'Minimum resize ratio',
@@ -95,6 +97,7 @@ window.__ModuleLoader__.load({
         formatWebp: 'WebP',
         formatPng: 'PNG（无损）',
         maxEdge: '最大长边（px）',
+        maxPixels: '像素上限（百万）',
         maxBytes: '目标字节（KiB）',
         minBytes: '小于此值跳过（KiB）',
         minResizeScale: '最小缩放比例',
@@ -238,6 +241,7 @@ window.__ModuleLoader__.load({
       const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }))
       const setNumber = (key) => (raw) => setDraft((current) => ({ ...current, [key]: raw === '' ? '' : Number(raw) }))
       const setKib = (key) => (raw) => setDraft((current) => ({ ...current, [key]: raw === '' ? '' : Math.round(Number(raw) * 1024) }))
+      const setMegapixels = (key) => (raw) => setDraft((current) => ({ ...current, [key]: raw === '' ? '' : Math.round(Number(raw) * 1000000) }))
 
       const dirty = JSON.stringify(draft) !== JSON.stringify(merge(snapshot.value))
       const canSave = !busy && dirty
@@ -317,6 +321,7 @@ window.__ModuleLoader__.load({
 
         section(t('sectionAdvanced'), [
           h(NumberField, { key: 'maxEdge', id: 'ric-max-edge', label: t('maxEdge'), value: draft.maxEdge, min: 64, max: 8192, step: 1, onChange: setNumber('maxEdge') }),
+          h(NumberField, { key: 'maxPixels', id: 'ric-max-pixels', label: t('maxPixels'), value: Math.round(Number(draft.maxPixels) / 10000) / 100, min: 0.01, step: 0.01, onChange: setMegapixels('maxPixels') }),
           h(NumberField, { key: 'maxBytes', id: 'ric-max-bytes', label: t('maxBytes'), value: Math.round(Number(draft.maxBytes) / 1024), min: 1, step: 1, onChange: setKib('maxBytes') }),
           h(NumberField, { key: 'minBytes', id: 'ric-min-bytes', label: t('minBytes'), value: Math.round(Number(draft.minBytes) / 1024), min: 0, step: 1, onChange: setKib('minBytes') }),
           h(NumberField, { key: 'minResizeScale', id: 'ric-min-resize', label: t('minResizeScale'), value: draft.minResizeScale, min: 0.1, max: 1, step: 0.05, onChange: setNumber('minResizeScale') }),

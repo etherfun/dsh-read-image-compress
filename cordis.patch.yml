@@ -7,6 +7,7 @@
         resolutionScale: 1
         format: auto
         maxEdge: 1568
+        maxPixels: 1690000
         maxBytes: 524288
         minBytes: 131072
         minResizeScale: 0.9

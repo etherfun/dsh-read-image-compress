@@ -78,6 +78,7 @@ export const Config = Schema === undefined ? undefined : Schema.object({
   resolutionScale: Schema.number().min(0.1).max(1).default(1).volatile(),
   format: Schema.string().default('auto').volatile(),
   maxEdge: Schema.number().min(64).max(8192).default(1568).volatile(),
+  maxPixels: Schema.number().min(10000).max(268435456).default(1690000).volatile(),
   maxBytes: Schema.number().min(1024).default(524288).volatile(),
   minBytes: Schema.number().min(0).default(131072).volatile(),
   minResizeScale: Schema.number().min(0.1).max(1).default(0.9).volatile(),
@@ -100,6 +101,7 @@ const DEFAULTS = Object.freeze({
   resolutionScale: 1,
   format: 'auto',
   maxEdge: 1568,
+  maxPixels: 1690000,
   maxBytes: 524288,
   minBytes: 131072,
   minResizeScale: 0.9,
@@ -147,6 +149,7 @@ function normalizeConfig(raw) {
   const quality = integer(readValue(config.quality, DEFAULTS.quality), 'quality', 1, 100)
   const resolutionScale = numberInRange(readValue(config.resolutionScale, DEFAULTS.resolutionScale), 'resolutionScale', 0.1, 1)
   const maxEdge = integer(readValue(config.maxEdge, DEFAULTS.maxEdge), 'maxEdge', 64, 8192)
+  const maxPixels = integer(readValue(config.maxPixels, DEFAULTS.maxPixels), 'maxPixels', 10000, 268435456)
   const maxBytes = integer(readValue(config.maxBytes, DEFAULTS.maxBytes), 'maxBytes', 1024, Number.MAX_SAFE_INTEGER)
   const minBytes = integer(readValue(config.minBytes, DEFAULTS.minBytes), 'minBytes', 0, Number.MAX_SAFE_INTEGER)
   const minResizeScale = numberInRange(readValue(config.minResizeScale, DEFAULTS.minResizeScale), 'minResizeScale', 0.1, 1)
@@ -181,6 +184,7 @@ function normalizeConfig(raw) {
     resolutionScale,
     format,
     maxEdge,
+    maxPixels,
     maxBytes,
     minBytes,
     minResizeScale,
@@ -221,10 +225,19 @@ function formatFor(hasAlpha, options) {
   return hasAlpha ? 'webp' : 'jpeg'
 }
 
+/**
+ * Pick the raster to encode. The long-edge cap, the total-pixel budget, and the
+ * user's extra scale are all upper bounds; the smallest one wins. The pixel
+ * budget matters because a model bills an image by its pixels after its own
+ * downscale, so a square image capped only by a long edge can still cost more
+ * tokens than the ~1300×1300 budget we target by default.
+ */
 function targetFor(image, options) {
   const longEdge = Math.max(image.width, image.height)
-  const desired = Math.max(1, Math.min(options.maxEdge, Math.round(longEdge * options.resolutionScale)))
-  const scale = desired / longEdge
+  const area = image.width * image.height
+  const edgeScale = Math.min(1, options.maxEdge / longEdge)
+  const pixelScale = area > options.maxPixels ? Math.sqrt(options.maxPixels / area) : 1
+  const scale = Math.min(1, options.resolutionScale, edgeScale, pixelScale)
   const resize = scale < 1 && scale <= options.minResizeScale
   return resize
     ? {
@@ -319,6 +332,7 @@ function cacheKey(image, options) {
     options.resolutionScale,
     options.format,
     options.maxEdge,
+    options.maxPixels,
     options.maxBytes,
     options.minBytes,
     options.minResizeScale,

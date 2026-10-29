@@ -37,6 +37,19 @@ the footer the plugin appends below the gallery:
   and how much resolution was shed (1 − compressed long edge ÷ original long
   edge), so both the token-saving and the visible detail loss are explicit.
 
+### Why the pixel budget
+
+The provider tokenizes every image by its pixels, not by its file size: a small
+image is upscaled toward roughly 544×544 and a large one is downscaled toward
+roughly 1300×1300 before it is billed, with a cap of about 1024 tokens per
+image. A long-edge-only cap therefore still lets a square image cost the full
+budget (1568×1568 is 2.4 MP), while anything above ~1.69 MP buys no extra tokens.
+
+`maxPixels` defaults to `1690000` (1300×1300), so the committed image already
+sits at or below the provider's own target: same tokens, fewer bytes, less
+decode time. Raise it when small details matter more than tokens; lower it with
+`resolutionScale` or a smaller budget when they do not.
+
 `summaryMode: compact` produces `4096×2600 3.90 MB → 1568×996 255 KB · 15.7×`;
 `summaryMode: off` removes the footer entirely. `summaryLanguage` switches the
 labels between Chinese and English. Skipped images (already small, GIFs) get no
@@ -65,6 +78,7 @@ second-level **Configure** page — and saves as one atomic mutation; the next
     resolutionScale: 1
     format: auto
     maxEdge: 1568
+    maxPixels: 1690000
     maxBytes: 524288
     minBytes: 131072
     minResizeScale: 0.9
@@ -84,6 +98,7 @@ second-level **Configure** page — and saves as one atomic mutation; the next
 | `resolutionScale` | `1` | Extra long-edge scale relative to the source, 0.1–1. Combined with `maxEdge` via the smaller target. |
 | `format` | `auto` | `auto` (WebP for alpha, JPEG otherwise), `jpeg`, `webp`, or `png`. |
 | `maxEdge` | `1568` | Absolute long-edge cap in pixels. |
+| `maxPixels` | `1690000` | Total-pixel budget, about 1300×1300. Together with `maxEdge` and `resolutionScale` it is an upper bound; the smallest wins. |
 | `maxBytes` | `524288` | Byte target. JPEG/WebP quality steps down from `quality` toward 40 until the output fits; PNG cannot be constrained this way. |
 | `minBytes` | `131072` | Skip images that need no resize and are already smaller than this. |
 | `minResizeScale` | `0.9` | Only resize when the target long edge is at most 90% of the source; avoids marginal downscales that can increase bytes. |
