@@ -37,11 +37,13 @@ the footer the plugin appends below the gallery:
   and how much resolution was shed (1 − compressed long edge ÷ original long
   edge), so both the byte saving and the visible detail loss are explicit.
 - **≈N tokens** estimates the image bill with the **DeepSeek profile**: the
-  raster is clamped to the 544² floor and the 1300² ceiling and scaled against
-  the 1024-token cap. At the cap the line adds
-  `（已达 DeepSeek 单张 1024 tokens 上限）`, because that ceiling belongs to
-  DeepSeek — other providers cap or scale images differently, so treat the
-  number as a reference, not a portable price.
+  544² floor applies, but nothing is clamped above 1300² — an image that would
+  bill past the cap keeps a proportional estimate so the overage is visible.
+  At the cap the line says `（已达 … 1024 tokens 上限）`; above it the line says
+  `（大于 … 1024 tokens 上限，服务端可能二次压缩）`, because DeepSeek may shrink
+  the image again before billing. That ceiling belongs to DeepSeek — other
+  providers cap or scale differently, so treat the number as a reference, not a
+  portable price.
 
 ### Preview
 
@@ -60,9 +62,11 @@ plugin registers `POST /api/read-image-compress/preview`, which runs the same
 `sharp` build as the hook, so the sizes match what `read_image` would commit.
 The route caches the last six drafts.
 
-Click a thumbnail to open it at 1280 px in an overlay (Escape or a click
-outside closes it) — the three variants share the same crop, so quality
-differences are directly comparable.
+Click a thumbnail to open a full-screen viewer: the **actual bytes** of that
+variant are served by `GET /api/read-image-compress/preview/image`, with a
+fit-window / 1:1 toggle, the three variants switchable in the header, and
+Escape to close. At 1:1 the browser's own scaling is out of the way, so
+compression artifacts are visible.
 
 **Bring your own photo.** `POST /api/read-image-compress/source` accepts raw
 image bytes and returns an id; the card then sends that id with each preview

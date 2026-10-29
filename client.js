@@ -55,6 +55,14 @@ window.__ModuleLoader__.load({
     /** Three side-by-side renderings of the bundled sample. */
     const VARIANT_LABEL_KEYS = { original: 'variantOriginal', native: 'variantNative', plugin: 'variantPlugin' }
 
+    /** The DeepSeek cap note: over, at, or none. */
+    function tokenNote(variant, cap, t) {
+      const ceiling = Number.isFinite(cap) ? cap : 1024
+      if (variant.tokens > ceiling) return `（${t('previewTokenOver')}）`
+      if (variant.tokens === ceiling) return `（${t('previewTokenCap')}）`
+      return ''
+    }
+
     function PreviewGrid({ t, data, onOpen }) {
       return h('div', { style: styles.cards }, data.variants.map((variant) => h('figure', { key: variant.id, style: styles.card },
         h('figcaption', { style: styles.cardTitle }, t(VARIANT_LABEL_KEYS[variant.id])),
@@ -66,11 +74,12 @@ window.__ModuleLoader__.load({
           onClick: () => onOpen?.(variant),
         }),
         h('div', { style: styles.cardMeta }, `${variant.width}×${variant.height} · ${formatBytes(variant.bytes)}`),
-        h('div', { style: styles.cardMeta }, `≈${variant.tokens} tokens${variant.capped ? `（${t('previewTokenCap')}）` : ''}`))))
+        h('div', { style: styles.cardMeta }, `≈${variant.tokens} tokens${tokenNote(variant, data.cap, t)}`))))
     }
 
     /** Full-size look at one variant; click anywhere or Escape closes it. */
-    function ZoomOverlay({ t, variant, onClose }) {
+    function ZoomOverlay({ t, variants, cap, variant, onClose, onSelect }) {
+      const [fit, setFit] = React.useState(true)
       React.useEffect(() => {
         if (variant === undefined) return undefined
         const onKey = (event) => { if (event.key === 'Escape') onClose() }
@@ -82,13 +91,23 @@ window.__ModuleLoader__.load({
         h('div', { style: styles.zoomBox, onClick: (event) => event.stopPropagation() },
           h('div', { style: styles.zoomHead },
             h('strong', null, t(VARIANT_LABEL_KEYS[variant.id])),
-            h('span', { style: styles.sourceLabel }, `${variant.width}×${variant.height} · ${formatBytes(variant.bytes)} · ≈${variant.tokens} tokens`),
-            h('button', { type: 'button', style: styles.secondary, onClick: onClose }, t('previewClose'))),
-          h('img', {
-            src: variant.large ?? variant.thumbnail,
-            alt: t(VARIANT_LABEL_KEYS[variant.id]),
-            style: styles.zoomImage,
-          })))
+            h('span', { style: styles.zoomMeta }, `${variant.width}×${variant.height} · ${formatBytes(variant.bytes)} · ≈${variant.tokens} tokens${tokenNote(variant, cap, t)}`),
+            h('div', { style: styles.zoomActions },
+              (variants ?? []).map((entry) => h('button', {
+                key: entry.id,
+                type: 'button',
+                style: entry.id === variant.id ? styles.primary : styles.secondary,
+                onClick: () => onSelect?.(entry),
+              }, t(VARIANT_LABEL_KEYS[entry.id]))),
+              h('button', { type: 'button', style: styles.secondary, onClick: () => setFit((current) => !current) },
+                fit ? t('previewActualSize') : t('previewFitWindow')),
+              h('button', { type: 'button', style: styles.secondary, onClick: onClose }, t('previewClose')))),
+          h('div', { style: styles.zoomBody },
+            h('img', {
+              src: variant.viewUrl ?? variant.large ?? variant.thumbnail,
+              alt: t(VARIANT_LABEL_KEYS[variant.id]),
+              style: fit ? styles.zoomImageFit : styles.zoomImageActual,
+            }))))
     }
     const DICT = {
       en: {
@@ -107,8 +126,11 @@ window.__ModuleLoader__.load({
         previewResetSample: 'Use the bundled sample',
         previewZoomHint: 'Click to enlarge',
         previewClose: 'Close',
+        previewActualSize: '1:1 pixels',
+        previewFitWindow: 'Fit window',
         previewTokenCap: 'at the DeepSeek 1024-token cap',
-        previewTokenHint: 'Tokens use the DeepSeek profile (1300×1300 ≈ 1024, capped). Other models may cap or scale differently.',
+        previewTokenOver: 'over the DeepSeek 1024-token cap; the server may recompress it',
+        previewTokenHint: 'Tokens use the DeepSeek profile (1300×1300 ≈ 1024). Above that the estimate keeps growing so you can see how far over the cap an image is, even though DeepSeek bills at most 1024. Other models cap or scale differently.',
         previewOff: 'The footer is off, so this line will not appear when expanded.',
         variantOriginal: 'Original',
         variantNative: 'Native compression',
@@ -167,8 +189,11 @@ window.__ModuleLoader__.load({
         previewResetSample: '恢复示例图',
         previewZoomHint: '点击放大',
         previewClose: '关闭',
+        previewActualSize: '1:1 原始像素',
+        previewFitWindow: '适应窗口',
         previewTokenCap: '已达 DeepSeek 单张 1024 tokens 上限',
-        previewTokenHint: 'token 按 DeepSeek 口径估算（1300×1300 ≈ 1024，超出即封顶）；其他模型的上限与算法可能不同。',
+        previewTokenOver: '大于 DeepSeek 单张 1024 tokens 上限，服务端可能二次压缩',
+        previewTokenHint: 'token 按 DeepSeek 口径估算（1300×1300 ≈ 1024）；超过后估算仍按像素增长，用来显示超出上限多少（DeepSeek 实际最多按 1024 计费）。其他模型的上限与算法可能不同。',
         previewOff: '底部描述已关闭，展开时不会显示这一行。',
         variantOriginal: '原图',
         variantNative: '原生压缩',
@@ -303,27 +328,44 @@ window.__ModuleLoader__.load({
         inset: 0,
         zIndex: 60,
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '24px',
-        background: 'rgba(0, 0, 0, 0.72)',
+        padding: '12px',
+        background: '#0b0d10',
       },
       zoomBox: {
-        maxWidth: 'min(1280px, 100%)',
-        maxHeight: '100%',
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
         display: 'flex',
         flexDirection: 'column',
         gap: '10px',
         color: '#fff',
       },
-      zoomHead: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' },
-      zoomImage: {
+      zoomHead: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
+      zoomMeta: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #9aa4b2)' },
+      zoomActions: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginLeft: 'auto' },
+      zoomBody: {
+        flex: 1,
+        minHeight: 0,
+        overflow: 'auto',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#111418',
+        borderRadius: '8px',
+      },
+      zoomImageFit: {
         display: 'block',
         maxWidth: '100%',
-        maxHeight: '82vh',
+        maxHeight: '100%',
         objectFit: 'contain',
-        borderRadius: '8px',
         background: '#fff',
+      },
+      zoomImageActual: {
+        display: 'block',
+        maxWidth: 'none',
+        maxHeight: 'none',
+        background: '#fff',
+        cursor: 'grab',
       },
     }
 
@@ -498,7 +540,14 @@ window.__ModuleLoader__.load({
           : preview.data === undefined
             ? h('p', { style: styles.hint }, uploadBusy ? t('previewUploading') : t('previewLoading'))
             : h(PreviewGrid, { t, data: preview.data, onOpen: setZoom }),
-        h(ZoomOverlay, { t, variant: zoom, onClose: () => setZoom(undefined) }),
+        h(ZoomOverlay, {
+          t,
+          variants: preview.data?.variants,
+          cap: preview.data?.cap,
+          variant: zoom,
+          onClose: () => setZoom(undefined),
+          onSelect: setZoom,
+        }),
         h('p', { style: styles.hint }, t('previewTokenHint')),
         draft.summaryMode === 'off' ? h('p', { style: styles.hint }, t('previewOff')) : null)
 

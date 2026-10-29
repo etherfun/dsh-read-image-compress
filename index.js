@@ -497,14 +497,15 @@ const MAX_BILLED_PIXELS = 1300 * 1300
 const IMAGE_TOKEN_CAP = 1024
 
 /**
- * Estimate the per-image token cost implied by the provider's stated rule: clamp
- * the raster between the upscale floor and the billing ceiling, then scale the
- * cap linearly. An estimate for display, not a tokenizer reading.
+ * Estimate the per-image token cost implied by the provider's stated rule: the
+ * upscale floor applies, but the ceiling does not — an image above 1300² keeps
+ * a proportional (over-cap) estimate so the footer can say by how much it would
+ * exceed DeepSeek's 1024-token cap. An estimate for display, not a tokenizer.
  */
 function estimateTokens(width, height) {
   const area = width * height
   if (!(area > 0)) return 0
-  const billed = Math.min(MAX_BILLED_PIXELS, Math.max(MIN_BILLED_PIXELS, area))
+  const billed = Math.max(MIN_BILLED_PIXELS, area)
   return Math.max(1, Math.round((billed / MAX_BILLED_PIXELS) * IMAGE_TOKEN_CAP))
 }
 
@@ -549,9 +550,11 @@ function summaryLine(image, replacement, source, options) {
   const sourceFormat = mediaLabelForPath(source.path, image.mediaType)
   const compressedFormat = mediaLabel(replacement.mediaType)
   const tokens = estimateTokens(replacement.width, replacement.height)
-  const capNote = tokens >= IMAGE_TOKEN_CAP
-    ? zh ? '（已达 DeepSeek 单张 1024 tokens 上限）' : ' (at the DeepSeek 1024-token cap)'
-    : ''
+  const capNote = tokens > IMAGE_TOKEN_CAP
+    ? zh ? '（大于 DeepSeek 单张 1024 tokens 上限，服务端可能二次压缩）' : ' (over the DeepSeek 1024-token cap; the server may recompress it)'
+    : tokens === IMAGE_TOKEN_CAP
+      ? zh ? '（已达 DeepSeek 单张 1024 tokens 上限）' : ' (at the DeepSeek 1024-token cap)'
+      : ''
   const raster = (width, height) => `${width}×${height}`
 
   if (options.summaryMode === 'compact') {
@@ -624,6 +627,7 @@ function compressedContent(result, value, replacement, options, source) {
  */
 const PREVIEW_ROUTE = '/api/read-image-compress/preview'
 const PREVIEW_SOURCE_ROUTE = '/api/read-image-compress/source'
+const PREVIEW_IMAGE_ROUTE = '/api/read-image-compress/preview/image'
 const PREVIEW_SAMPLE = new URL('./preview/sample.png', import.meta.url)
 const PREVIEW_WIDTH = 3200
 const PREVIEW_HEIGHT = 2000
@@ -631,10 +635,10 @@ const PREVIEW_NATIVE_MAX_EDGE = 2048
 const PREVIEW_NATIVE_MAX_BYTES = 1048576
 const PREVIEW_NATIVE_LADDER = [85, 75, 60]
 const PREVIEW_THUMB_WIDTH = 560
-const PREVIEW_LARGE_WIDTH = 1280
 const PREVIEW_BODY_LIMIT = 32768
 const PREVIEW_UPLOAD_LIMIT = 16 * 1024 * 1024
 const PREVIEW_CACHE_ENTRIES = 6
+const PREVIEW_VIEW_ENTRIES = 6
 const PREVIEW_UPLOAD_ENTRIES = 4
 const PREVIEW_MAX_PIXELS = 64e6
 
@@ -642,6 +646,7 @@ let previewSamplePromise
 let previewSample
 const previewCache = new Map()
 const previewUploads = new Map()
+const previewViews = new Map()
 
 /** The 3200×2000 JPEG the bundled sample becomes, encoded once per process. */
 async function previewSampleBuffer() {
@@ -757,10 +762,17 @@ async function previewPayload(settings, sourceId) {
     { id: 'plugin', width: plugin.width, height: plugin.height, bytes: plugin.bytes, buffer: plugin.data },
   ]
   const thumbnails = await Promise.all(variants.map((variant) => previewThumbnail(variant.buffer, PREVIEW_THUMB_WIDTH, 78)))
-  const larges = await Promise.all(variants.map((variant) => previewThumbnail(variant.buffer, PREVIEW_LARGE_WIDTH, 80)))
+  const viewKey = randomUUID()
+  previewViews.set(viewKey, {
+    original: { buffer: source.buffer, mediaType: source.mediaType ?? 'image/png' },
+    native: { buffer: native.data, mediaType: 'image/jpeg' },
+    plugin: { buffer: plugin.data, mediaType: plugin.mediaType ?? 'image/jpeg' },
+  })
+  while (previewViews.size > PREVIEW_VIEW_ENTRIES) previewViews.delete(previewViews.keys().next().value)
   return {
     ok: true,
     cap: IMAGE_TOKEN_CAP,
+    viewKey,
     sample: { width: source.width, height: source.height, bytes: source.bytes },
     variants: variants.map((variant, index) => {
       const tokens = estimateTokens(variant.width, variant.height)
@@ -772,7 +784,7 @@ async function previewPayload(settings, sourceId) {
         tokens,
         capped: tokens >= IMAGE_TOKEN_CAP,
         thumbnail: thumbnails[index],
-        large: larges[index],
+        viewUrl: `${PREVIEW_IMAGE_ROUTE}?key=${viewKey}&variant=${variant.id}`,
       }
     }),
   }
@@ -838,6 +850,34 @@ function installPreview(ctx, rawConfig) {
 
     webCtx.effect(() => webServer.register({
       kind: 'exact',
+      path: PREVIEW_IMAGE_ROUTE,
+      handler: async (req, res) => {
+        try {
+          const url = new URL(req.url ?? '/', 'http://x')
+          const key = url.searchParams.get('key') ?? ''
+          const variant = url.searchParams.get('variant') ?? ''
+          const entry = previewViews.get(key)
+          const selected = entry?.[variant]
+          if (selected === undefined) {
+            res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+            return res.end('preview view not found')
+          }
+          res.writeHead(200, {
+            'content-type': selected.mediaType,
+            'content-length': String(selected.buffer.length),
+            'cache-control': 'private, max-age=300',
+          })
+          return res.end(selected.buffer)
+        } catch (error) {
+          warn(ctx, `preview image failed: ${error instanceof Error ? error.message : String(error)}`)
+          res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
+          return res.end('preview image unavailable')
+        }
+      },
+    }), 'read-image-compress: preview image route')
+
+    webCtx.effect(() => webServer.register({
+      kind: 'exact',
       path: PREVIEW_SOURCE_ROUTE,
       handler: async (req, res) => {
         try {
@@ -848,7 +888,7 @@ function installPreview(ctx, rawConfig) {
           const height = meta.height
           if (!isPositiveInteger(width) || !isPositiveInteger(height)) throw new Error('not a decodable image')
           const id = randomUUID()
-          previewUploads.set(id, { buffer, width, height, bytes: buffer.length, hasAlpha: meta.hasAlpha === true })
+          previewUploads.set(id, { buffer, width, height, bytes: buffer.length, hasAlpha: meta.hasAlpha === true, mediaType: `image/${meta.format === 'jpg' ? 'jpeg' : meta.format ?? 'png'}` })
           while (previewUploads.size > PREVIEW_UPLOAD_ENTRIES) previewUploads.delete(previewUploads.keys().next().value)
           return previewJson(res, 200, { ok: true, id, width, height, bytes: buffer.length })
         } catch (error) {
