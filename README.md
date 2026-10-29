@@ -24,7 +24,7 @@ Expanding a `read_image` row shows the path, the built-in size line, and then
 the footer the plugin appends below the gallery:
 
 ```text
-原图: 4096×2600 · 3.90 MB · PNG | 压缩后: 1568×996 · 255 KB · WebP | 压缩比: 15.7×（体积 ↓93.7%，分辨率 ↓61.7%） | ≈946 tokens
+原图: 4096×2600 · 3.90 MB · PNG | 压缩后: 1568×996 · 255 KB · WebP | 压缩比: 15.7×（体积 ↓93.7%，分辨率 ↓61.7%） | ≈938 tokens
 ```
 
 - **原图** is the file as read: `originalDimensions` when the attachment store
@@ -36,14 +36,16 @@ the footer the plugin appends below the gallery:
 - **压缩比** is `original bytes / compressed bytes`, followed by the byte delta
   and how much resolution was shed (1 − compressed long edge ÷ original long
   edge), so both the byte saving and the visible detail loss are explicit.
-- **≈N tokens** estimates the image bill with the **DeepSeek profile**: the
-  544² floor applies, but nothing is clamped above 1300² — an image that would
-  bill past the cap keeps a proportional estimate so the overage is visible.
-  At the cap the line says `（已达 … 1024 tokens 上限）`; above it the line says
-  `（大于 … 1024 tokens 上限，服务端可能二次压缩）`, because DeepSeek may shrink
-  the image again before billing. That ceiling belongs to DeepSeek — other
-  providers cap or scale differently, so treat the number as a reference, not a
-  portable price.
+- **≈N tokens** reproduces DeepSeek's official image-token calculator: 14 px
+  patches downsampled 3×, one image capped at **1024** tokens, rasters below
+  544² upscaled first. The number shown is the *uncapped* estimate, so an
+  oversized raster shows how far past the cap it is; the note then adds the
+  value the server would actually charge after recompressing, e.g.
+  `（大于 … 1024 tokens 上限，二次压缩后约 962 tokens）`. This is DeepSeek's
+  model — other providers cap or scale differently, so treat it as a reference,
+  not a portable price. Reference values from the same algorithm: 1568×980 →
+  938, 1300×1300 → 994, 1920×1080 → 968 charged (1224 uncapped), 3200×2000 →
+  962 charged (3746 uncapped).
 
 ### Preview
 

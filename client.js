@@ -58,7 +58,10 @@ window.__ModuleLoader__.load({
     /** The DeepSeek cap note: over, at, or none. */
     function tokenNote(variant, cap, t) {
       const ceiling = Number.isFinite(cap) ? cap : 1024
-      if (variant.tokens > ceiling) return `（${t('previewTokenOver')}）`
+      if (variant.tokens > ceiling) {
+        const billed = Number.isFinite(variant.billed) ? variant.billed : ceiling
+        return `（${t('previewTokenOver', { billed })}）`
+      }
       if (variant.tokens === ceiling) return `（${t('previewTokenCap')}）`
       return ''
     }
@@ -171,7 +174,7 @@ window.__ModuleLoader__.load({
         previewActualSize: '1:1 pixels',
         previewFitWindow: 'Fit window',
         previewTokenCap: 'at the DeepSeek 1024-token cap',
-        previewTokenOver: 'over the DeepSeek 1024-token cap; the server may recompress it',
+        previewTokenOver: 'over the DeepSeek 1024-token cap; about {billed} tokens after the server recompresses',
         previewTokenHint: 'Tokens use the DeepSeek profile (1300×1300 ≈ 1024). Above that the estimate keeps growing so you can see how far over the cap an image is, even though DeepSeek bills at most 1024. Other models cap or scale differently.',
         previewOff: 'The footer is off, so this line will not appear when expanded.',
         variantOriginal: 'Original',
@@ -196,7 +199,7 @@ window.__ModuleLoader__.load({
         downscaleWebp: 'Downscale WebP results',
         skipGif: 'Skip GIF images',
         saveHint: 'Changes apply to the next read_image call; the expanded image ends with the original/compressed footer.',
-        footerExample: 'Example: Original: 3200×2000 · 2.05 MB · PNG | Compressed: 1568×980 · 43.9 KB · JPEG | Ratio: 47.9× (bytes ↓97.9%, resolution ↓51.0%) | ≈931 tokens',
+        footerExample: 'Example: Original: 3200×2000 · 2.05 MB · PNG | Compressed: 1568×980 · 43.9 KB · JPEG | Ratio: 47.9× (bytes ↓97.9%, resolution ↓51.0%) | ≈938 tokens',
         sectionSummary: 'Result footer',
         summaryMode: 'Footer detail',
         summaryDetailed: 'Detailed — original, compressed, ratio',
@@ -234,7 +237,7 @@ window.__ModuleLoader__.load({
         previewActualSize: '1:1 原始像素',
         previewFitWindow: '适应窗口',
         previewTokenCap: '已达 DeepSeek 单张 1024 tokens 上限',
-        previewTokenOver: '大于 DeepSeek 单张 1024 tokens 上限，服务端可能二次压缩',
+        previewTokenOver: '大于 DeepSeek 单张 1024 tokens 上限，二次压缩后约 {billed} tokens',
         previewTokenHint: 'token 按 DeepSeek 口径估算（1300×1300 ≈ 1024）；超过后估算仍按像素增长，用来显示超出上限多少（DeepSeek 实际最多按 1024 计费）。其他模型的上限与算法可能不同。',
         previewOff: '底部描述已关闭，展开时不会显示这一行。',
         variantOriginal: '原图',
@@ -259,7 +262,7 @@ window.__ModuleLoader__.load({
         downscaleWebp: '允许缩小 WebP',
         skipGif: '跳过 GIF',
         saveHint: '修改在下一次 read_image 时生效；展开图片底部会显示原图与压缩后的对比。',
-        footerExample: '示例：原图: 3200×2000 · 2.05 MB · PNG | 压缩后: 1568×980 · 43.9 KB · JPEG | 压缩比: 47.9×（体积 ↓97.9%，分辨率 ↓51.0%） | ≈931 tokens',
+        footerExample: '示例：原图: 3200×2000 · 2.05 MB · PNG | 压缩后: 1568×980 · 43.9 KB · JPEG | 压缩比: 47.9×（体积 ↓97.9%，分辨率 ↓51.0%） | ≈938 tokens',
         sectionSummary: '结果描述',
         summaryMode: '底部描述',
         summaryDetailed: '详细 —— 原图、压缩后、压缩比',

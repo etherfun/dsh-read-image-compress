@@ -491,22 +491,114 @@ function percentOf(from, to) {
   return Math.round((to / from) * 1000) / 10
 }
 
-/** The provider normalizes an image to 544²..1300² before billing it and caps one image at 1024 tokens. */
-const MIN_BILLED_PIXELS = 544 * 544
-const MAX_BILLED_PIXELS = 1300 * 1300
-const IMAGE_TOKEN_CAP = 1024
-
 /**
- * Estimate the per-image token cost implied by the provider's stated rule: the
- * upscale floor applies, but the ceiling does not — an image above 1300² keeps
- * a proportional (over-cap) estimate so the footer can say by how much it would
- * exceed DeepSeek's 1024-token cap. An estimate for display, not a tokenizer.
+ * The image-token model behind DeepSeek's official calculator: 14 px patches,
+ * 3x patch downsampling, one image capped at 1024 tokens, images below 544²
+ * upscaled. `imageTokens(w, h, cap)` reproduces it; the display uses an
+ * effectively unlimited cap so an oversized raster shows how far past 1024 it
+ * is, and `billedTokens` gives the value the server would charge after its own
+ * recompression.
  */
-function estimateTokens(width, height) {
+const IMAGE_TOKEN_CAP = 1024
+const PATCH_SIZE = 14
+const PATCH_DOWNSAMPLE = 3
+const MIN_IMAGE_PIXELS = 544 * 544
+const UNLIMITED_TOKENS = 1e9
+
+const floorDiv = (a, b) => Math.floor(a / b)
+const ceilDiv = (a, b) => Math.floor((a + b - 1) / b)
+const truncNum = (value) => Math.trunc(value)
+
+function calcNumTokens(nx, ny) {
+  return nx * (ny + 1) + 2
+}
+
+function solveResizeRatio(height, width, maxNToken) {
+  const ratio = height / width
+  const n = Math.sqrt((maxNToken - 2) / ratio + 0.25) - 0.5
+  const a = n * ratio
+  let bestWidth
+  let bestHeight
+  if (n < 1) {
+    const w = 1
+    const h = floorDiv(maxNToken - 2, w + 1)
+    bestWidth = h * PATCH_SIZE * PATCH_DOWNSAMPLE
+    bestHeight = w * PATCH_SIZE * PATCH_DOWNSAMPLE
+  } else if (a < 1) {
+    const h = 1
+    const w = floorDiv(maxNToken - 2, h) - 1
+    if (!(w > 1)) throw new Error('image aspect ratio out of range')
+    bestWidth = w * PATCH_SIZE * PATCH_DOWNSAMPLE
+    bestHeight = h * PATCH_SIZE * PATCH_DOWNSAMPLE
+  } else {
+    const scaleWidth = truncNum(n)
+    const scaleHeight = truncNum(a)
+    const ratioW = (scaleWidth * PATCH_SIZE * PATCH_DOWNSAMPLE) / width
+    const ratioH = (scaleHeight * PATCH_SIZE * PATCH_DOWNSAMPLE) / height
+    const scale = Math.min(ratioW, ratioH)
+    bestWidth = truncNum((width * scale) / PATCH_SIZE) * PATCH_SIZE
+    bestHeight = truncNum((height * scale) / PATCH_SIZE) * PATCH_SIZE
+  }
+  const nLlmH = ceilDiv(floorDiv(bestHeight, PATCH_SIZE), PATCH_DOWNSAMPLE)
+  const nLlmW = ceilDiv(floorDiv(bestWidth, PATCH_SIZE), PATCH_DOWNSAMPLE)
+  return { width: bestWidth, height: bestHeight, tokens: calcNumTokens(nLlmH, nLlmW) }
+}
+
+/** One resize pass: pad to the patch grid, then shrink when the cap is exceeded. */
+function resizeInnerTokens(width, height, maxNToken) {
+  let w = width
+  let h = height
+  const area = w * h
+  if (area < MIN_IMAGE_PIXELS && area > 0) {
+    const scale = Math.sqrt(MIN_IMAGE_PIXELS / area)
+    w = truncNum(w * scale)
+    h = truncNum(h * scale)
+  }
+  const paddedW = ceilDiv(w, PATCH_SIZE) * PATCH_SIZE
+  const paddedH = ceilDiv(h, PATCH_SIZE) * PATCH_SIZE
+  const nLlmH = ceilDiv(floorDiv(paddedH, PATCH_SIZE), PATCH_DOWNSAMPLE)
+  const nLlmW = ceilDiv(floorDiv(paddedW, PATCH_SIZE), PATCH_DOWNSAMPLE)
+  const tokens = calcNumTokens(nLlmH, nLlmW)
+  if (tokens > maxNToken) return solveResizeRatio(h, w, maxNToken)
+  return { width: paddedW, height: paddedH, tokens }
+}
+
+/** The official estimate; iterate until the pass is stable, like the calculator. */
+function imageTokens(width, height, maxNToken) {
+  if (!(width > 0) || !(height > 0)) return 0
+  let current = resizeInnerTokens(width, height, maxNToken)
+  for (let index = 0; index < 10; index += 1) {
+    const next = resizeInnerTokens(current.width, current.height, maxNToken)
+    if (next.tokens === current.tokens && next.width === current.width && next.height === current.height) {
+      return current.tokens
+    }
+    current = next
+  }
+  return current.tokens
+}
+
+/** Rough area-proportional fallback when the patch solver cannot place a raster. */
+function fallbackTokens(width, height) {
   const area = width * height
-  if (!(area > 0)) return 0
-  const billed = Math.max(MIN_BILLED_PIXELS, area)
-  return Math.max(1, Math.round((billed / MAX_BILLED_PIXELS) * IMAGE_TOKEN_CAP))
+  return area > 0 ? Math.max(1, Math.round((area / (1300 * 1300)) * IMAGE_TOKEN_CAP)) : 0
+}
+
+/** What the image "would" cost without the cap: how far past 1024 a raster is. */
+function estimateTokens(width, height) {
+  try {
+    return imageTokens(Math.round(width), Math.round(height), UNLIMITED_TOKENS)
+  } catch {
+    return fallbackTokens(width, height)
+  }
+}
+
+/** What DeepSeek would charge after its own recompression. */
+function billedTokens(width, height) {
+  try {
+    return imageTokens(Math.round(width), Math.round(height), IMAGE_TOKEN_CAP)
+  } catch {
+    return Math.min(IMAGE_TOKEN_CAP, fallbackTokens(width, height))
+  }
 }
 
 /**
@@ -550,8 +642,11 @@ function summaryLine(image, replacement, source, options) {
   const sourceFormat = mediaLabelForPath(source.path, image.mediaType)
   const compressedFormat = mediaLabel(replacement.mediaType)
   const tokens = estimateTokens(replacement.width, replacement.height)
+  const billed = billedTokens(replacement.width, replacement.height)
   const capNote = tokens > IMAGE_TOKEN_CAP
-    ? zh ? '（大于 DeepSeek 单张 1024 tokens 上限，服务端可能二次压缩）' : ' (over the DeepSeek 1024-token cap; the server may recompress it)'
+    ? zh
+      ? `（大于 DeepSeek 单张 1024 tokens 上限，二次压缩后约 ${billed} tokens）`
+      : ` (over the DeepSeek 1024-token cap; about ${billed} tokens after the server recompresses)`
     : tokens === IMAGE_TOKEN_CAP
       ? zh ? '（已达 DeepSeek 单张 1024 tokens 上限）' : ' (at the DeepSeek 1024-token cap)'
       : ''
@@ -782,7 +877,8 @@ async function previewPayload(settings, sourceId) {
         height: variant.height,
         bytes: variant.bytes,
         tokens,
-        capped: tokens >= IMAGE_TOKEN_CAP,
+        billed: billedTokens(variant.width, variant.height),
+        capped: tokens > IMAGE_TOKEN_CAP,
         thumbnail: thumbnails[index],
         viewUrl: `${PREVIEW_IMAGE_ROUTE}?key=${viewKey}&variant=${variant.id}`,
       }
