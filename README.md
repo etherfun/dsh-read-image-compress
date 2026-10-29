@@ -24,7 +24,7 @@ Expanding a `read_image` row shows the path, the built-in size line, and then
 the footer the plugin appends below the gallery:
 
 ```text
-原图: 4096×2600 · 3.90 MB · PNG | 压缩后: 1568×996 · 255 KB · WebP | 压缩比: 15.7×（体积 ↓93.7%，分辨率 ↓61.7%）
+原图: 4096×2600 · 3.90 MB · PNG | 压缩后: 1568×996 · 255 KB · WebP | 压缩比: 15.7×（体积 ↓93.7%，分辨率 ↓61.7%） | ≈946 tokens
 ```
 
 - **原图** is the file as read: `originalDimensions` when the attachment store
@@ -35,7 +35,18 @@ the footer the plugin appends below the gallery:
 - **压缩后** is the committed attachment the gallery displays.
 - **压缩比** is `original bytes / compressed bytes`, followed by the byte delta
   and how much resolution was shed (1 − compressed long edge ÷ original long
-  edge), so both the token-saving and the visible detail loss are explicit.
+  edge), so both the byte saving and the visible detail loss are explicit.
+- **≈N tokens** estimates the provider's image bill: the raster is clamped to
+  the 544² floor and the 1300² ceiling and scaled against the 1024-token cap.
+  The settings card previews the same number before you save.
+
+### Preview
+
+The settings card renders a live preview for a 3200×2000 sample: the raster the
+current `maxEdge` / `maxPixels` / `resolutionScale` would produce, the
+resolution drop, and the estimated per-image token cost. It follows the draft,
+so the numbers change before you save; `summaryMode: off` is called out there
+too.
 
 ### Why the pixel budget
 

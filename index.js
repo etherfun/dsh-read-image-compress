@@ -490,6 +490,23 @@ function percentOf(from, to) {
   return Math.round((to / from) * 1000) / 10
 }
 
+/** The provider normalizes an image to 544²..1300² before billing it and caps one image at 1024 tokens. */
+const MIN_BILLED_PIXELS = 544 * 544
+const MAX_BILLED_PIXELS = 1300 * 1300
+const IMAGE_TOKEN_CAP = 1024
+
+/**
+ * Estimate the per-image token cost implied by the provider's stated rule: clamp
+ * the raster between the upscale floor and the billing ceiling, then scale the
+ * cap linearly. An estimate for display, not a tokenizer reading.
+ */
+function estimateTokens(width, height) {
+  const area = width * height
+  if (!(area > 0)) return 0
+  const billed = Math.min(MAX_BILLED_PIXELS, Math.max(MIN_BILLED_PIXELS, area))
+  return Math.max(1, Math.round((billed / MAX_BILLED_PIXELS) * IMAGE_TOKEN_CAP))
+}
+
 /**
  * The original file facts behind one read. `originalDimensions`, when present,
  * is the pre-normalization raster; the on-disk byte size is recovered with a
@@ -530,12 +547,14 @@ function summaryLine(image, replacement, source, options) {
     : (1 - Math.max(replacement.width, replacement.height) / Math.max(source.width, source.height)) * 100
   const sourceFormat = mediaLabelForPath(source.path, image.mediaType)
   const compressedFormat = mediaLabel(replacement.mediaType)
+  const tokens = estimateTokens(replacement.width, replacement.height)
   const raster = (width, height) => `${width}×${height}`
 
   if (options.summaryMode === 'compact') {
     const left = `${raster(source.width, source.height)}${sourceSize === undefined ? '' : ` ${sourceSize}`}`
     const right = `${raster(replacement.width, replacement.height)}${compressedSize === undefined ? '' : ` ${compressedSize}`}`
-    return multiplier === undefined ? `${left} → ${right}` : `${left} → ${right} · ${multiplier}`
+    const arrowLine = multiplier === undefined ? `${left} → ${right}` : `${left} → ${right} · ${multiplier}`
+    return `${arrowLine} · ≈${tokens} tokens`
   }
 
   const sourceParts = [raster(source.width, source.height)]
@@ -560,9 +579,9 @@ function summaryLine(image, replacement, source, options) {
     : `${multiplier}${details.length === 0 ? '' : zh ? `（${details.join('，')}）` : ` (${details.join(', ')})`}`
 
   if (zh) {
-    return `原图: ${sourceParts.join(' · ')} | 压缩后: ${compressedParts.join(' · ')}${ratio === undefined ? '' : ` | 压缩比: ${ratio}`}`
+    return `原图: ${sourceParts.join(' · ')} | 压缩后: ${compressedParts.join(' · ')}${ratio === undefined ? '' : ` | 压缩比: ${ratio}`} | ≈${tokens} tokens`
   }
-  return `Original: ${sourceParts.join(' · ')} | Compressed: ${compressedParts.join(' · ')}${ratio === undefined ? '' : ` | Ratio: ${ratio}`}`
+  return `Original: ${sourceParts.join(' · ')} | Compressed: ${compressedParts.join(' · ')}${ratio === undefined ? '' : ` | Ratio: ${ratio}`} | ≈${tokens} tokens`
 }
 
 /**
