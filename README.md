@@ -36,9 +36,12 @@ the footer the plugin appends below the gallery:
 - **压缩比** is `original bytes / compressed bytes`, followed by the byte delta
   and how much resolution was shed (1 − compressed long edge ÷ original long
   edge), so both the byte saving and the visible detail loss are explicit.
-- **≈N tokens** estimates the provider's image bill: the raster is clamped to
-  the 544² floor and the 1300² ceiling and scaled against the 1024-token cap.
-  The settings card previews the same number before you save.
+- **≈N tokens** estimates the image bill with the **DeepSeek profile**: the
+  raster is clamped to the 544² floor and the 1300² ceiling and scaled against
+  the 1024-token cap. At the cap the line adds
+  `（已达 DeepSeek 单张 1024 tokens 上限）`, because that ceiling belongs to
+  DeepSeek — other providers cap or scale images differently, so treat the
+  number as a reference, not a portable price.
 
 ### Preview
 
@@ -56,6 +59,10 @@ estimated token cost. The numbers come from the Host, not the browser: the
 plugin registers `POST /api/read-image-compress/preview`, which runs the same
 `sharp` build as the hook, so the sizes match what `read_image` would commit.
 The route caches the last six drafts.
+
+Click a thumbnail to open it at 1280 px in an overlay (Escape or a click
+outside closes it) — the three variants share the same crop, so quality
+differences are directly comparable.
 
 **Bring your own photo.** `POST /api/read-image-compress/source` accepts raw
 image bytes and returns an id; the card then sends that id with each preview

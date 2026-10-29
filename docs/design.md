@@ -680,3 +680,21 @@ ctx.effect(() => webServer.register({ kind: 'exact', path: '/api/read-image-comp
 ### 16.7 路由注册时机
 
 第一版在 `apply()` 里直接 `ctx.get('webServer')`，而插件的 inject 只有 `attachments`，组合顺序靠前时 webServer 还没就绪，于是启动日志里出现 `Preview route not registered: sharp or webServer is unavailable`。现在改成 `ctx.inject(['webServer'], (webCtx) => …)`，等服务挂载后再注册两条路由——这也是仓里 `dsh-api-remote-access`、`dsh-client-modules` 的写法。
+
+## 17. 触顶标注、点击放大与口径说明（2026-10-29）
+
+### 17.1 触顶标注
+
+估算结果 `tokens >= 1024` 时，底部描述追加 `（已达 DeepSeek 单张 1024 tokens 上限）`（英文 ` (at the DeepSeek 1024-token cap)`）。之所以强调 DeepSeek，是因为 1300²/1024 是 DeepSeek 的口径；换模型后上限与换算可能完全不同，这个数字只作参考，不能当成通用报价。
+
+### 17.2 口径写进 UI
+
+- 设置卡片网格下方固定一行：`token 按 DeepSeek 口径估算（1300×1300 ≈ 1024，超出即封顶）；其他模型的上限与算法可能不同。`
+- 每张卡片在 `capped` 时把上限标注附在 tokens 后面，和底部描述一致。
+
+### 17.3 点击放大
+
+- 预览接口为每个变体多返回一张 1280 px / q80 的 `large`（缩略图仍是 560 px / q78）；
+- 点缩略图打开全屏遮罩，显示 `large` 与真实尺寸/字节/tokens；点击遮罩外或按 Esc 关闭；
+- 三个变体使用同一裁剪，放大后能直接对比画质差异；
+- 代价是响应体变大（三张 large ≈ 300–500 KB），但预览结果按草稿做 LRU，只有改动设置时才重新取。

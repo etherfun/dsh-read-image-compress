@@ -549,13 +549,16 @@ function summaryLine(image, replacement, source, options) {
   const sourceFormat = mediaLabelForPath(source.path, image.mediaType)
   const compressedFormat = mediaLabel(replacement.mediaType)
   const tokens = estimateTokens(replacement.width, replacement.height)
+  const capNote = tokens >= IMAGE_TOKEN_CAP
+    ? zh ? '（已达 DeepSeek 单张 1024 tokens 上限）' : ' (at the DeepSeek 1024-token cap)'
+    : ''
   const raster = (width, height) => `${width}×${height}`
 
   if (options.summaryMode === 'compact') {
     const left = `${raster(source.width, source.height)}${sourceSize === undefined ? '' : ` ${sourceSize}`}`
     const right = `${raster(replacement.width, replacement.height)}${compressedSize === undefined ? '' : ` ${compressedSize}`}`
     const arrowLine = multiplier === undefined ? `${left} → ${right}` : `${left} → ${right} · ${multiplier}`
-    return `${arrowLine} · ≈${tokens} tokens`
+    return `${arrowLine} · ≈${tokens} tokens${capNote}`
   }
 
   const sourceParts = [raster(source.width, source.height)]
@@ -580,9 +583,9 @@ function summaryLine(image, replacement, source, options) {
     : `${multiplier}${details.length === 0 ? '' : zh ? `（${details.join('，')}）` : ` (${details.join(', ')})`}`
 
   if (zh) {
-    return `原图: ${sourceParts.join(' · ')} | 压缩后: ${compressedParts.join(' · ')}${ratio === undefined ? '' : ` | 压缩比: ${ratio}`} | ≈${tokens} tokens`
+    return `原图: ${sourceParts.join(' · ')} | 压缩后: ${compressedParts.join(' · ')}${ratio === undefined ? '' : ` | 压缩比: ${ratio}`} | ≈${tokens} tokens${capNote}`
   }
-  return `Original: ${sourceParts.join(' · ')} | Compressed: ${compressedParts.join(' · ')}${ratio === undefined ? '' : ` | Ratio: ${ratio}`} | ≈${tokens} tokens`
+  return `Original: ${sourceParts.join(' · ')} | Compressed: ${compressedParts.join(' · ')}${ratio === undefined ? '' : ` | Ratio: ${ratio}`} | ≈${tokens} tokens${capNote}`
 }
 
 /**
@@ -628,6 +631,7 @@ const PREVIEW_NATIVE_MAX_EDGE = 2048
 const PREVIEW_NATIVE_MAX_BYTES = 1048576
 const PREVIEW_NATIVE_LADDER = [85, 75, 60]
 const PREVIEW_THUMB_WIDTH = 560
+const PREVIEW_LARGE_WIDTH = 1280
 const PREVIEW_BODY_LIMIT = 32768
 const PREVIEW_UPLOAD_LIMIT = 16 * 1024 * 1024
 const PREVIEW_CACHE_ENTRIES = 6
@@ -728,13 +732,13 @@ async function encodeNativeVariant(source) {
   return best
 }
 
-/** A small JPEG data URL for the card; the reported facts stay those of the variant. */
-async function previewThumbnail(buffer) {
+/** A JPEG data URL at one display width; the reported facts stay those of the variant. */
+async function previewThumbnail(buffer, width, quality) {
   const output = await sharp(buffer, { limitInputPixels: PREVIEW_MAX_PIXELS })
     .rotate()
     .flatten({ background: '#ffffff' })
-    .resize({ width: PREVIEW_THUMB_WIDTH, withoutEnlargement: true })
-    .jpeg({ quality: 78 })
+    .resize({ width, withoutEnlargement: true })
+    .jpeg({ quality })
     .toBuffer()
   return `data:image/jpeg;base64,${output.toString('base64')}`
 }
@@ -752,18 +756,25 @@ async function previewPayload(settings, sourceId) {
     { id: 'native', width: native.width, height: native.height, bytes: native.bytes, buffer: native.data },
     { id: 'plugin', width: plugin.width, height: plugin.height, bytes: plugin.bytes, buffer: plugin.data },
   ]
-  const thumbnails = await Promise.all(variants.map((variant) => previewThumbnail(variant.buffer)))
+  const thumbnails = await Promise.all(variants.map((variant) => previewThumbnail(variant.buffer, PREVIEW_THUMB_WIDTH, 78)))
+  const larges = await Promise.all(variants.map((variant) => previewThumbnail(variant.buffer, PREVIEW_LARGE_WIDTH, 80)))
   return {
     ok: true,
+    cap: IMAGE_TOKEN_CAP,
     sample: { width: source.width, height: source.height, bytes: source.bytes },
-    variants: variants.map((variant, index) => ({
-      id: variant.id,
-      width: variant.width,
-      height: variant.height,
-      bytes: variant.bytes,
-      tokens: estimateTokens(variant.width, variant.height),
-      thumbnail: thumbnails[index],
-    })),
+    variants: variants.map((variant, index) => {
+      const tokens = estimateTokens(variant.width, variant.height)
+      return {
+        id: variant.id,
+        width: variant.width,
+        height: variant.height,
+        bytes: variant.bytes,
+        tokens,
+        capped: tokens >= IMAGE_TOKEN_CAP,
+        thumbnail: thumbnails[index],
+        large: larges[index],
+      }
+    }),
   }
 }
 

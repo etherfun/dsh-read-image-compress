@@ -55,12 +55,40 @@ window.__ModuleLoader__.load({
     /** Three side-by-side renderings of the bundled sample. */
     const VARIANT_LABEL_KEYS = { original: 'variantOriginal', native: 'variantNative', plugin: 'variantPlugin' }
 
-    function PreviewGrid({ t, data }) {
+    function PreviewGrid({ t, data, onOpen }) {
       return h('div', { style: styles.cards }, data.variants.map((variant) => h('figure', { key: variant.id, style: styles.card },
         h('figcaption', { style: styles.cardTitle }, t(VARIANT_LABEL_KEYS[variant.id])),
-        h('img', { src: variant.thumbnail, alt: t(VARIANT_LABEL_KEYS[variant.id]), style: styles.cardImage }),
+        h('img', {
+          src: variant.thumbnail,
+          alt: t(VARIANT_LABEL_KEYS[variant.id]),
+          title: t('previewZoomHint'),
+          style: styles.cardImage,
+          onClick: () => onOpen?.(variant),
+        }),
         h('div', { style: styles.cardMeta }, `${variant.width}×${variant.height} · ${formatBytes(variant.bytes)}`),
-        h('div', { style: styles.cardMeta }, `≈${variant.tokens} tokens`))))
+        h('div', { style: styles.cardMeta }, `≈${variant.tokens} tokens${variant.capped ? `（${t('previewTokenCap')}）` : ''}`))))
+    }
+
+    /** Full-size look at one variant; click anywhere or Escape closes it. */
+    function ZoomOverlay({ t, variant, onClose }) {
+      React.useEffect(() => {
+        if (variant === undefined) return undefined
+        const onKey = (event) => { if (event.key === 'Escape') onClose() }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [variant, onClose])
+      if (variant === undefined) return null
+      return h('div', { style: styles.overlay, onClick: onClose },
+        h('div', { style: styles.zoomBox, onClick: (event) => event.stopPropagation() },
+          h('div', { style: styles.zoomHead },
+            h('strong', null, t(VARIANT_LABEL_KEYS[variant.id])),
+            h('span', { style: styles.sourceLabel }, `${variant.width}×${variant.height} · ${formatBytes(variant.bytes)} · ≈${variant.tokens} tokens`),
+            h('button', { type: 'button', style: styles.secondary, onClick: onClose }, t('previewClose'))),
+          h('img', {
+            src: variant.large ?? variant.thumbnail,
+            alt: t(VARIANT_LABEL_KEYS[variant.id]),
+            style: styles.zoomImage,
+          })))
     }
     const DICT = {
       en: {
@@ -77,6 +105,10 @@ window.__ModuleLoader__.load({
         previewUploaded: 'Uploaded image',
         previewUploading: 'Uploading…',
         previewResetSample: 'Use the bundled sample',
+        previewZoomHint: 'Click to enlarge',
+        previewClose: 'Close',
+        previewTokenCap: 'at the DeepSeek 1024-token cap',
+        previewTokenHint: 'Tokens use the DeepSeek profile (1300×1300 ≈ 1024, capped). Other models may cap or scale differently.',
         previewOff: 'The footer is off, so this line will not appear when expanded.',
         variantOriginal: 'Original',
         variantNative: 'Native compression',
@@ -133,6 +165,10 @@ window.__ModuleLoader__.load({
         previewUploaded: '已上传的图片',
         previewUploading: '上传中…',
         previewResetSample: '恢复示例图',
+        previewZoomHint: '点击放大',
+        previewClose: '关闭',
+        previewTokenCap: '已达 DeepSeek 单张 1024 tokens 上限',
+        previewTokenHint: 'token 按 DeepSeek 口径估算（1300×1300 ≈ 1024，超出即封顶）；其他模型的上限与算法可能不同。',
         previewOff: '底部描述已关闭，展开时不会显示这一行。',
         variantOriginal: '原图',
         variantNative: '原生压缩',
@@ -256,11 +292,39 @@ window.__ModuleLoader__.load({
         border: '1px solid var(--dsw-alias-border-1, #d0d7de)',
         background: 'var(--dsw-alias-bg-layer-2, #f6f8fa)',
         marginBottom: '6px',
+        cursor: 'zoom-in',
       },
       cardMeta: { fontSize: '11.5px', lineHeight: 1.45, color: 'var(--dsw-alias-label-secondary, #6b7280)' },
       sourceRow: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', margin: '0 0 12px' },
       fileInput: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #6b7280)' },
       sourceLabel: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #6b7280)' },
+      overlay: {
+        position: 'fixed',
+        inset: 0,
+        zIndex: 60,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px',
+        background: 'rgba(0, 0, 0, 0.72)',
+      },
+      zoomBox: {
+        maxWidth: 'min(1280px, 100%)',
+        maxHeight: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        color: '#fff',
+      },
+      zoomHead: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' },
+      zoomImage: {
+        display: 'block',
+        maxWidth: '100%',
+        maxHeight: '82vh',
+        objectFit: 'contain',
+        borderRadius: '8px',
+        background: '#fff',
+      },
     }
 
     function merge(value) {
@@ -300,6 +364,7 @@ window.__ModuleLoader__.load({
       const [preview, setPreview] = React.useState({ status: 'loading', data: undefined })
       const [source, setSource] = React.useState(undefined)
       const [uploadBusy, setUploadBusy] = React.useState(false)
+      const [zoom, setZoom] = React.useState(undefined)
       const previewKey = JSON.stringify({
         sourceId: source?.id ?? null,
         settings: {
@@ -432,7 +497,9 @@ window.__ModuleLoader__.load({
           ? h('p', { style: styles.error }, preview.detail === undefined ? t('previewError') : `${t('previewError')}（${preview.detail}）`)
           : preview.data === undefined
             ? h('p', { style: styles.hint }, uploadBusy ? t('previewUploading') : t('previewLoading'))
-            : h(PreviewGrid, { t, data: preview.data }),
+            : h(PreviewGrid, { t, data: preview.data, onOpen: setZoom }),
+        h(ZoomOverlay, { t, variant: zoom, onClose: () => setZoom(undefined) }),
+        h('p', { style: styles.hint }, t('previewTokenHint')),
         draft.summaryMode === 'off' ? h('p', { style: styles.hint }, t('previewOff')) : null)
 
       return h('div', { style: styles.root },
@@ -510,7 +577,7 @@ window.__ModuleLoader__.load({
 
     return {
       // Exposed for the offline test harness only; the module loader ignores it.
-      __components: { PreviewGrid },
+      __components: { PreviewGrid, ZoomOverlay },
       inject: ['slots', 'locale', 'configForms'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, DICT))
