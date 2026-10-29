@@ -592,15 +592,6 @@ function estimateTokens(width, height) {
   }
 }
 
-/** What DeepSeek would charge after its own recompression. */
-function billedTokens(width, height) {
-  try {
-    return imageTokens(Math.round(width), Math.round(height), IMAGE_TOKEN_CAP)
-  } catch {
-    return Math.min(IMAGE_TOKEN_CAP, fallbackTokens(width, height))
-  }
-}
-
 /**
  * The original file facts behind one read. `originalDimensions`, when present,
  * is the pre-normalization raster; the on-disk byte size is recovered with a
@@ -642,11 +633,8 @@ function summaryLine(image, replacement, source, options) {
   const sourceFormat = mediaLabelForPath(source.path, image.mediaType)
   const compressedFormat = mediaLabel(replacement.mediaType)
   const tokens = estimateTokens(replacement.width, replacement.height)
-  const billed = billedTokens(replacement.width, replacement.height)
   const capNote = tokens > IMAGE_TOKEN_CAP
-    ? zh
-      ? `（大于 DeepSeek 单张 1024 tokens 上限，二次压缩后约 ${billed} tokens）`
-      : ` (over the DeepSeek 1024-token cap; about ${billed} tokens after the server recompresses)`
+    ? zh ? '（大于 DeepSeek 单张 1024 tokens 上限，服务端可能二次压缩）' : ' (over the DeepSeek 1024-token cap; the server may recompress it)'
     : tokens === IMAGE_TOKEN_CAP
       ? zh ? '（已达 DeepSeek 单张 1024 tokens 上限）' : ' (at the DeepSeek 1024-token cap)'
       : ''
@@ -877,7 +865,6 @@ async function previewPayload(settings, sourceId) {
         height: variant.height,
         bytes: variant.bytes,
         tokens,
-        billed: billedTokens(variant.width, variant.height),
         capped: tokens > IMAGE_TOKEN_CAP,
         thumbnail: thumbnails[index],
         viewUrl: `${PREVIEW_IMAGE_ROUTE}?key=${viewKey}&variant=${variant.id}`,

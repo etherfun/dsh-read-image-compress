@@ -58,10 +58,7 @@ window.__ModuleLoader__.load({
     /** The DeepSeek cap note: over, at, or none. */
     function tokenNote(variant, cap, t) {
       const ceiling = Number.isFinite(cap) ? cap : 1024
-      if (variant.tokens > ceiling) {
-        const billed = Number.isFinite(variant.billed) ? variant.billed : ceiling
-        return `（${t('previewTokenOver', { billed })}）`
-      }
+      if (variant.tokens > ceiling) return `（${t('previewTokenOver')}）`
       if (variant.tokens === ceiling) return `（${t('previewTokenCap')}）`
       return ''
     }
@@ -92,7 +89,10 @@ window.__ModuleLoader__.load({
       const [fit, setFit] = React.useState(true)
       const [zoom, setZoom] = React.useState(1)
       const [box, setBox] = React.useState(viewportBox)
+      const [dragging, setDragging] = React.useState(false)
       const bodyRef = React.useRef(null)
+      const dragRef = React.useRef(null)
+      const movedRef = React.useRef(false)
 
       React.useEffect(() => {
         const update = () => setBox(viewportBox())
@@ -121,6 +121,28 @@ window.__ModuleLoader__.load({
         return () => node.removeEventListener('wheel', onWheel)
       }, [variant?.id])
 
+      React.useEffect(() => {
+        if (!dragging) return undefined
+        const onMove = (event) => {
+          const state = dragRef.current
+          const node = bodyRef.current
+          if (state === null || state === undefined || node === null || node === undefined) return
+          if (Math.abs(event.clientX - state.x) > 3 || Math.abs(event.clientY - state.y) > 3) movedRef.current = true
+          node.scrollLeft = state.left - (event.clientX - state.x)
+          node.scrollTop = state.top - (event.clientY - state.y)
+        }
+        const onUp = () => {
+          dragRef.current = null
+          setDragging(false)
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+        return () => {
+          window.removeEventListener('mousemove', onMove)
+          window.removeEventListener('mouseup', onUp)
+        }
+      }, [dragging])
+
       if (variant === undefined) return null
       // Fit is always relative to the same viewport, so every variant starts at
       // the same on-screen size — a 931 px output and a 3200 px original are
@@ -129,7 +151,16 @@ window.__ModuleLoader__.load({
       const scale = fit ? fitScale : fitScale * zoom
       const displayWidth = Math.max(1, Math.round(variant.width * scale))
 
-      return h('div', { style: styles.overlay, onClick: onClose },
+      return h('div', {
+        style: styles.overlay,
+        onClick: () => {
+          if (movedRef.current) {
+            movedRef.current = false
+            return
+          }
+          onClose()
+        },
+      },
         h('div', { style: styles.zoomBox, onClick: (event) => event.stopPropagation() },
           h('div', { style: styles.zoomHead },
             h('strong', null, t(VARIANT_LABEL_KEYS[variant.id])),
@@ -139,17 +170,30 @@ window.__ModuleLoader__.load({
                 key: entry.id,
                 type: 'button',
                 style: entry.id === variant.id ? styles.primary : styles.secondary,
-                onClick: () => { setFit(true); setZoom(1); onSelect?.(entry) },
+                onClick: () => { onSelect?.(entry) },
               }, t(VARIANT_LABEL_KEYS[entry.id]))),
               h('button', { type: 'button', style: styles.secondary, title: '−', onClick: () => { setFit(false); setZoom((current) => Math.max(0.2, current / 1.25)) } }, '−'),
               h('button', { type: 'button', style: styles.secondary, title: '+', onClick: () => { setFit(false); setZoom((current) => Math.min(8, current * 1.25)) } }, '+'),
               h('button', { type: 'button', style: styles.secondary, onClick: () => { setFit(false); setZoom(1 / (fitScale || 1)) } }, t('previewActualSize')),
               h('button', { type: 'button', style: styles.secondary, onClick: () => { setFit(true); setZoom(1) } }, t('previewFitWindow')),
               h('button', { type: 'button', style: styles.secondary, onClick: onClose }, t('previewClose')))),
-          h('div', { style: styles.zoomBody, ref: bodyRef },
+          h('div', {
+            style: { ...styles.zoomBody, cursor: dragging ? 'grabbing' : 'grab' },
+            ref: bodyRef,
+            onMouseDown: (event) => {
+              if (event.button !== 0) return
+              const node = bodyRef.current
+              if (node === null || node === undefined) return
+              dragRef.current = { x: event.clientX, y: event.clientY, left: node.scrollLeft, top: node.scrollTop }
+              movedRef.current = false
+              setDragging(true)
+              event.preventDefault()
+            },
+          },
             h('img', {
               src: variant.viewUrl ?? variant.large ?? variant.thumbnail,
               alt: t(VARIANT_LABEL_KEYS[variant.id]),
+              draggable: false,
               style: { ...styles.zoomImage, width: `${displayWidth}px` },
             }))))
     }
@@ -174,7 +218,7 @@ window.__ModuleLoader__.load({
         previewActualSize: '1:1 pixels',
         previewFitWindow: 'Fit window',
         previewTokenCap: 'at the DeepSeek 1024-token cap',
-        previewTokenOver: 'over the DeepSeek 1024-token cap; about {billed} tokens after the server recompresses',
+        previewTokenOver: 'over the DeepSeek 1024-token cap; the server may recompress it',
         previewTokenHint: 'Tokens use the DeepSeek profile (1300×1300 ≈ 1024). Above that the estimate keeps growing so you can see how far over the cap an image is, even though DeepSeek bills at most 1024. Other models cap or scale differently.',
         previewOff: 'The footer is off, so this line will not appear when expanded.',
         variantOriginal: 'Original',
@@ -237,7 +281,7 @@ window.__ModuleLoader__.load({
         previewActualSize: '1:1 原始像素',
         previewFitWindow: '适应窗口',
         previewTokenCap: '已达 DeepSeek 单张 1024 tokens 上限',
-        previewTokenOver: '大于 DeepSeek 单张 1024 tokens 上限，二次压缩后约 {billed} tokens',
+        previewTokenOver: '大于 DeepSeek 单张 1024 tokens 上限，服务端可能二次压缩',
         previewTokenHint: 'token 按 DeepSeek 口径估算（1300×1300 ≈ 1024）；超过后估算仍按像素增长，用来显示超出上限多少（DeepSeek 实际最多按 1024 计费）。其他模型的上限与算法可能不同。',
         previewOff: '底部描述已关闭，展开时不会显示这一行。',
         variantOriginal: '原图',
@@ -375,6 +419,7 @@ window.__ModuleLoader__.load({
         display: 'flex',
         padding: '12px',
         background: '#0b0d10',
+        userSelect: 'none',
       },
       zoomBox: {
         flex: 1,
@@ -405,7 +450,6 @@ window.__ModuleLoader__.load({
         maxHeight: 'none',
         height: 'auto',
         background: '#fff',
-        cursor: 'grab',
       },
     }
 

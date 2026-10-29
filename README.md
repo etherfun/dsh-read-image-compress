@@ -39,9 +39,9 @@ the footer the plugin appends below the gallery:
 - **≈N tokens** reproduces DeepSeek's official image-token calculator: 14 px
   patches downsampled 3×, one image capped at **1024** tokens, rasters below
   544² upscaled first. The number shown is the *uncapped* estimate, so an
-  oversized raster shows how far past the cap it is; the note then adds the
-  value the server would actually charge after recompressing, e.g.
-  `（大于 … 1024 tokens 上限，二次压缩后约 962 tokens）`. This is DeepSeek's
+  oversized raster shows how far past the cap it is, and the note says the
+  server may recompress it (`（大于 … 1024 tokens 上限，服务端可能二次压缩）`).
+  This is DeepSeek's
   model — other providers cap or scale differently, so treat it as a reference,
   not a portable price. Reference values from the same algorithm: 1568×980 →
   938, 1300×1300 → 994, 1920×1080 → 968 charged (1224 uncapped), 3200×2000 →
@@ -70,8 +70,9 @@ fit-to-window — every variant is scaled to the same viewport box, and because
 fit also enlarges, a 900 px output and a 3200 px original compare at the same
 size instead of one looking small. The wheel zooms around that fit scale
 (0.2×–8×), `−`/`+` step it, **1:1** shows native pixels where compression
-artifacts are clearest, the three variants switch in the header, and Escape
-closes.
+artifacts are clearest, and the left mouse button drags the enlarged image
+around. Switching variants keeps the current zoom, so the comparison stays at
+the same magnification; Escape closes.
 
 **Bring your own photo.** `POST /api/read-image-compress/source` accepts raw
 image bytes and returns an id; the card then sends that id with each preview
