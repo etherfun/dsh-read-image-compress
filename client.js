@@ -78,37 +78,79 @@ window.__ModuleLoader__.load({
     }
 
     /** Full-size look at one variant; click anywhere or Escape closes it. */
+    /** The overlay viewport minus its padding and header; approximate but stable. */
+    function viewportBox() {
+      const width = typeof window !== 'undefined' && Number.isFinite(window.innerWidth) ? window.innerWidth : 1280
+      const height = typeof window !== 'undefined' && Number.isFinite(window.innerHeight) ? window.innerHeight : 800
+      return { width: Math.max(240, width - 24), height: Math.max(180, height - 104) }
+    }
+
     function ZoomOverlay({ t, variants, cap, variant, onClose, onSelect }) {
       const [fit, setFit] = React.useState(true)
+      const [zoom, setZoom] = React.useState(1)
+      const [box, setBox] = React.useState(viewportBox)
+      const bodyRef = React.useRef(null)
+
+      React.useEffect(() => {
+        const update = () => setBox(viewportBox())
+        window.addEventListener('resize', update)
+        return () => window.removeEventListener('resize', update)
+      }, [])
+
       React.useEffect(() => {
         if (variant === undefined) return undefined
         const onKey = (event) => { if (event.key === 'Escape') onClose() }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
       }, [variant, onClose])
+
+      // A native listener, because React's wheel handler is passive and cannot
+      // stop the scroll container from panning while the wheel zooms.
+      React.useEffect(() => {
+        const node = bodyRef.current
+        if (node === null || node === undefined) return undefined
+        const onWheel = (event) => {
+          event.preventDefault()
+          setFit(false)
+          setZoom((current) => Math.min(8, Math.max(0.2, current * (event.deltaY < 0 ? 1.12 : 1 / 1.12))))
+        }
+        node.addEventListener('wheel', onWheel, { passive: false })
+        return () => node.removeEventListener('wheel', onWheel)
+      }, [variant?.id])
+
       if (variant === undefined) return null
+      // Fit is always relative to the same viewport, so every variant starts at
+      // the same on-screen size — a 931 px output and a 3200 px original are
+      // directly comparable instead of showing one small and one large.
+      const fitScale = Math.min(box.width / variant.width, box.height / variant.height)
+      const scale = fit ? fitScale : fitScale * zoom
+      const displayWidth = Math.max(1, Math.round(variant.width * scale))
+
       return h('div', { style: styles.overlay, onClick: onClose },
         h('div', { style: styles.zoomBox, onClick: (event) => event.stopPropagation() },
           h('div', { style: styles.zoomHead },
             h('strong', null, t(VARIANT_LABEL_KEYS[variant.id])),
-            h('span', { style: styles.zoomMeta }, `${variant.width}×${variant.height} · ${formatBytes(variant.bytes)} · ≈${variant.tokens} tokens${tokenNote(variant, cap, t)}`),
+            h('span', { style: styles.zoomMeta }, `${variant.width}×${variant.height} · ${formatBytes(variant.bytes)} · ≈${variant.tokens} tokens · ${Math.round(scale * 100)}%${tokenNote(variant, cap, t)}`),
             h('div', { style: styles.zoomActions },
               (variants ?? []).map((entry) => h('button', {
                 key: entry.id,
                 type: 'button',
                 style: entry.id === variant.id ? styles.primary : styles.secondary,
-                onClick: () => onSelect?.(entry),
+                onClick: () => { setFit(true); setZoom(1); onSelect?.(entry) },
               }, t(VARIANT_LABEL_KEYS[entry.id]))),
-              h('button', { type: 'button', style: styles.secondary, onClick: () => setFit((current) => !current) },
-                fit ? t('previewActualSize') : t('previewFitWindow')),
+              h('button', { type: 'button', style: styles.secondary, title: '−', onClick: () => { setFit(false); setZoom((current) => Math.max(0.2, current / 1.25)) } }, '−'),
+              h('button', { type: 'button', style: styles.secondary, title: '+', onClick: () => { setFit(false); setZoom((current) => Math.min(8, current * 1.25)) } }, '+'),
+              h('button', { type: 'button', style: styles.secondary, onClick: () => { setFit(false); setZoom(1 / (fitScale || 1)) } }, t('previewActualSize')),
+              h('button', { type: 'button', style: styles.secondary, onClick: () => { setFit(true); setZoom(1) } }, t('previewFitWindow')),
               h('button', { type: 'button', style: styles.secondary, onClick: onClose }, t('previewClose')))),
-          h('div', { style: styles.zoomBody },
+          h('div', { style: styles.zoomBody, ref: bodyRef },
             h('img', {
               src: variant.viewUrl ?? variant.large ?? variant.thumbnail,
               alt: t(VARIANT_LABEL_KEYS[variant.id]),
-              style: fit ? styles.zoomImageFit : styles.zoomImageActual,
+              style: { ...styles.zoomImage, width: `${displayWidth}px` },
             }))))
     }
+
     const DICT = {
       en: {
         title: 'Read image compression',
@@ -347,23 +389,18 @@ window.__ModuleLoader__.load({
         flex: 1,
         minHeight: 0,
         overflow: 'auto',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+        textAlign: 'center',
         background: '#111418',
         borderRadius: '8px',
+        padding: '8px',
       },
-      zoomImageFit: {
-        display: 'block',
-        maxWidth: '100%',
-        maxHeight: '100%',
-        objectFit: 'contain',
-        background: '#fff',
-      },
-      zoomImageActual: {
-        display: 'block',
+      zoomImage: {
+        display: 'inline-block',
+        verticalAlign: 'top',
+        margin: 0,
         maxWidth: 'none',
         maxHeight: 'none',
+        height: 'auto',
         background: '#fff',
         cursor: 'grab',
       },

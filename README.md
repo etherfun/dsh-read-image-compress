@@ -63,10 +63,13 @@ plugin registers `POST /api/read-image-compress/preview`, which runs the same
 The route caches the last six drafts.
 
 Click a thumbnail to open a full-screen viewer: the **actual bytes** of that
-variant are served by `GET /api/read-image-compress/preview/image`, with a
-fit-window / 1:1 toggle, the three variants switchable in the header, and
-Escape to close. At 1:1 the browser's own scaling is out of the way, so
-compression artifacts are visible.
+variant are served by `GET /api/read-image-compress/preview/image`. It opens
+fit-to-window — every variant is scaled to the same viewport box, and because
+fit also enlarges, a 900 px output and a 3200 px original compare at the same
+size instead of one looking small. The wheel zooms around that fit scale
+(0.2×–8×), `−`/`+` step it, **1:1** shows native pixels where compression
+artifacts are clearest, the three variants switch in the header, and Escape
+closes.
 
 **Bring your own photo.** `POST /api/read-image-compress/source` accepts raw
 image bytes and returns an id; the card then sends that id with each preview

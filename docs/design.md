@@ -702,6 +702,14 @@ ctx.effect(() => webServer.register({ kind: 'exact', path: '/api/read-image-comp
 ### 17.4 全屏查看（2026-10-29 更新）
 
 - 放大不再返回 1280 px 的缩略大图，而是为每个变体保留**真实编码字节**，经 `GET /api/read-image-compress/preview/image?key=…&variant=…` 原样流式返回；
+- 默认「适应窗口」：以视口（窗口宽高减 padding/标题栏）为基准算 `fitScale = min(boxW/imgW, boxH/imgH)`，**不限制放大**，所以 931 px 的输出和 3200 px 的原图会铺到同样高，能真正同尺寸对比；
+- 滚轮缩放以 fit 为 1×，范围 0.2×–8×；`−`/`+` 按 1.25 步进，`1:1` 直接换算到原始像素（`zoom = 1 / fitScale`）；
+- 顶部可在三个变体之间切换（切换会回到 fit），`Esc` 关闭；
+- 图片按显式像素宽度渲染，超出即出现滚动条，不再被浏览器缩放掩盖细节；
+- `previewViews` 保留最近 6 组变体字节（每组约 2–3 MB），随预览缓存一起淘汰。
+
+
+- 放大不再返回 1280 px 的缩略大图，而是为每个变体保留**真实编码字节**，经 `GET /api/read-image-compress/preview/image?key=…&variant=…` 原样流式返回；
 - 全屏遮罩铺满视口，默认「适应窗口」，可切到「1:1 原始像素」——此时浏览器不再缩放，压缩块效应能直接看出来；
 - 顶部可在三个变体之间切换，`Esc` 关闭；
 - `previewViews` 保留最近 6 组变体字节（每组约 2–3 MB），随预览缓存一起淘汰。
