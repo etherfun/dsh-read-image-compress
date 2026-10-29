@@ -375,7 +375,7 @@ window.__ModuleLoader__.load({
         (() => {
           const target = previewTarget(draft)
           const tokens = estimateTokens(target.width, target.height)
-          const percent = Math.round((1 - Math.max(target.width, target.height) / Math.max(SAMPLE.width, SAMPLE.height)) * 1000) / 10
+          const percent = ((1 - Math.max(target.width, target.height) / Math.max(SAMPLE.width, SAMPLE.height)) * 100).toFixed(1)
           return h('section', { style: styles.section },
             h('h4', { style: styles.heading }, t('sectionPreview')),
             h('div', { style: styles.example },
