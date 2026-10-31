@@ -1,6 +1,6 @@
 - insert:
     - id: read-image-compress
-      name: '@local/dsh-read-image-compress'
+      name: 'dsh-read-image-compress'
       config:
         enabled: true
         compressResolution: true
@@ -15,7 +15,7 @@
         minResizeScale: 0.9
         webpEffort: 4
         jpegBackground: '#ffffff'
-        cacheEntries: 128
+        cacheEntries: 64
         downscaleWebp: true
         skipGif: true
         summaryMode: detailed
