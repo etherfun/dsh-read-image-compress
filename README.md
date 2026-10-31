@@ -220,7 +220,16 @@ preview/sample.png  the real photo behind the settings preview
                     (uploads are in-memory only, never written)
 docs/design.md      architecture, contracts, and the hook rationale
 docs/benchmark.md   measured compression ratio, quality loss, and cache results
+docs/toc.yml        table of contents for the docs set
+scripts/validate-docs.mjs
+                    Microsoft Learn format check behind `npm run docs:check`
 ```
+
+The two articles in `docs/` follow the Microsoft Learn authoring format: YAML
+front matter, unnumbered noun-phrase headings, `[!NOTE]`-style alerts, and
+descriptive relative links. `npm run docs:check` enforces it — front matter keys,
+H1 matching the title, heading levels, table shape, language-tagged code fences,
+link targets, `toc.yml` entries, and the wording that Microsoft style avoids.
 
 ## Install in this profile
 

@@ -13,6 +13,9 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
+  "scripts": {
+    "docs:check": "node scripts/validate-docs.mjs"
+  },
   "files": [
     "index.js",
     "client.js",
