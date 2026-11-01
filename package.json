@@ -1,8 +1,7 @@
 {
-  "name": "@local/dsh-read-image-compress",
+  "name": "dsh-read-image-compress",
   "version": "0.15.0",
-  "private": true,
-  "description": "Compress read_image results before they enter the session: switch pixel downscaling and quality/byte compression on independently, choose JPEG/WebP/PNG, tune it from the Plugins page, and print an original/compressed/ratio footer under the image.",
+  "description": "Compress read_image results before they enter the session: switch pixel downscaling and quality/byte compression on independently, choose JPEG/WebP/PNG, tune it from the Plugins page, and print an original/compressed/ratio footer under the image. | read_image 结果压缩：分辨率与码率两个开关独立生效，可选 JPEG/WebP/PNG，在插件页调参，并在图片下方标注原图、压缩后与压缩比。",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -13,19 +12,40 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
+  "icon": "./icon.svg",
   "scripts": {
-    "docs:check": "node scripts/validate-docs.mjs"
+    "docs:check": "node scripts/validate-docs.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "files": [
     "index.js",
     "client.js",
+    "preview-sample.js",
     "cordis.patch.yml",
     "locale/*.json",
-    "preview/*.png",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/etherfun/dsh-read-image-compress.git"
+  },
+  "homepage": "https://github.com/etherfun/dsh-read-image-compress#readme",
+  "bugs": {
+    "url": "https://github.com/etherfun/dsh-read-image-compress/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "read-image",
+    "image-compression",
+    "sharp",
+    "webp",
+    "context-window"
+  ],
   "engines": {
     "node": ">=22.13",
     "dsh": ">=0.2.1-rc.3 <0.3.0-0"

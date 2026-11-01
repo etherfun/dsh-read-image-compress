@@ -19,6 +19,8 @@ import path from 'node:path'
 import { readFile, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 
+import { SampleUnavailableError, loadSamplePhoto } from './preview-sample.js'
+
 export const name = 'read-image-compress'
 
 /** The attachment store is optional; without it this plugin stays inactive. */
@@ -787,12 +789,20 @@ function compressedContent(result, value, replacement, options, source) {
  * Browser preview: three real renderings of one photo — as read, as the harness
  * alone would deliver it, and as this plugin would commit it — encoded by the
  * same sharp build the hook uses. The card may upload its own photo instead of
- * the bundled sample; uploaded bytes live in a small in-memory store.
+ * the sample; uploaded bytes live in a small in-memory store.
+ *
+ * The sample photo is not packaged. A development checkout keeps it beside the
+ * code and is read from disk; a published install fetches it from the GitHub
+ * repository (jsDelivr, then raw), and Bing's daily wallpaper stands in when
+ * neither GitHub route answers in time. See `preview-sample.js`.
  */
 const PREVIEW_ROUTE = '/api/read-image-compress/preview'
 const PREVIEW_SOURCE_ROUTE = '/api/read-image-compress/source'
 const PREVIEW_IMAGE_ROUTE = '/api/read-image-compress/preview/image'
-const PREVIEW_SAMPLE = new URL('./preview/sample.png', import.meta.url)
+const PREVIEW_SAMPLE_FILE = new URL('./preview/sample.png', import.meta.url)
+const PREVIEW_SAMPLE_BRANCH = 'main'
+const PREVIEW_SAMPLE_TTL_MS = 6 * 60 * 60 * 1000
+const PREVIEW_SAMPLE_RETRY_MS = 60 * 1000
 const PREVIEW_WIDTH = 3200
 const PREVIEW_HEIGHT = 2000
 const PREVIEW_NATIVE_MAX_EDGE = 2048
@@ -806,36 +816,108 @@ const PREVIEW_VIEW_ENTRIES = 6
 const PREVIEW_UPLOAD_ENTRIES = 4
 const PREVIEW_MAX_PIXELS = 64e6
 
-let previewSamplePromise
 let previewSample
+let previewSampleFor
+let previewSamplePromise
+let samplePhoto
+let samplePhotoAt = 0
+let samplePhotoFailureAt = 0
+let samplePhotoPromise
 const previewCache = new Map()
 const previewUploads = new Map()
 const previewViews = new Map()
 
-/** The 3200×2000 JPEG the bundled sample becomes, encoded once per process. */
-async function previewSampleBuffer() {
-  if (previewSample !== undefined) return previewSample
+/** The GitHub coordinates, read from the manifest so a renamed repository is one edit. */
+async function sampleRepository() {
+  try {
+    const manifest = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
+    const repository = manifest?.repository
+    if (typeof repository === 'string') return repository
+    if (typeof repository?.url === 'string') return repository.url
+  } catch {
+    // A manifest that cannot be read simply means no GitHub route.
+  }
+  return undefined
+}
+
+/**
+ * The sample photo bytes: the file beside the code, then GitHub, then Bing.
+ *
+ * The result is cached for `PREVIEW_SAMPLE_TTL_MS` (Bing changes daily, the
+ * repository rarely does), and a total failure is retried at most once a minute
+ * so an offline host does not pay the full source budget on every settings
+ * keystroke.
+ */
+async function resolveSamplePhoto(ctx) {
+  const now = Date.now()
+  if (samplePhoto !== undefined && now - samplePhotoAt < PREVIEW_SAMPLE_TTL_MS) return samplePhoto
+  if (samplePhotoPromise !== undefined) return samplePhotoPromise
+  if (samplePhoto === undefined && now - samplePhotoFailureAt < PREVIEW_SAMPLE_RETRY_MS) {
+    throw new SampleUnavailableError('the sample photo failed a moment ago and is waiting to be retried')
+  }
+  samplePhotoPromise = (async () => {
+    try {
+      const buffer = await readFile(PREVIEW_SAMPLE_FILE)
+      if (buffer.length > 0) {
+        return { buffer, mediaType: 'image/png', source: 'local', url: PREVIEW_SAMPLE_FILE.href }
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') warn(ctx, `sample photo: the packaged file is unreadable: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return loadSamplePhoto({
+      repository: await sampleRepository(),
+      branch: PREVIEW_SAMPLE_BRANCH,
+      log: (message) => warn(ctx, message),
+    })
+  })()
+    .then((photo) => {
+      samplePhoto = photo
+      samplePhotoAt = Date.now()
+      return photo
+    })
+    .catch((error) => {
+      samplePhotoFailureAt = Date.now()
+      throw error
+    })
+    .finally(() => {
+      samplePhotoPromise = undefined
+    })
+  return samplePhotoPromise
+}
+
+/** The 3200×2000 JPEG the sample becomes, encoded once per loaded photo. */
+async function previewSampleBuffer(ctx) {
+  const photo = await resolveSamplePhoto(ctx)
+  if (previewSample !== undefined && previewSampleFor === photo) return previewSample
   if (previewSamplePromise === undefined) {
     previewSamplePromise = (async () => {
-      const raw = await readFile(PREVIEW_SAMPLE)
-      const { data, info } = await sharp(raw)
+      const { data, info } = await sharp(photo.buffer)
         .resize({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT, fit: 'cover', position: 'centre' })
         .jpeg({ quality: 92 })
         .toBuffer({ resolveWithObject: true })
-      previewSample = { buffer: data, width: info.width, height: info.height, bytes: data.length, hasAlpha: false, mediaType: 'image/jpeg' }
+      previewSample = {
+        buffer: data,
+        width: info.width,
+        height: info.height,
+        bytes: data.length,
+        hasAlpha: false,
+        mediaType: 'image/jpeg',
+        source: photo.source,
+        url: photo.url,
+      }
+      previewSampleFor = photo
       return previewSample
-    })().catch((error) => {
+    })().finally(() => {
       previewSamplePromise = undefined
-      throw error
     })
   }
   return previewSamplePromise
 }
 
-/** An uploaded source when its id is still cached, else the bundled sample. */
-async function resolvePreviewSource(sourceId) {
+/** An uploaded source when its id is still cached, else the sample photo. */
+async function resolvePreviewSource(sourceId, ctx) {
   if (typeof sourceId === 'string' && previewUploads.has(sourceId)) return previewUploads.get(sourceId)
-  return previewSampleBuffer()
+  return previewSampleBuffer(ctx)
 }
 
 /** Encode the plugin's variant of a source with the draft settings (never skipped). */
@@ -896,9 +978,9 @@ async function previewThumbnail(buffer, width, quality) {
 }
 
 /** Encode the three variants and pair each with its facts and thumbnail. */
-async function previewPayload(settings, sourceId) {
+async function previewPayload(settings, sourceId, ctx) {
   const options = normalizeConfig(settings)
-  const source = await resolvePreviewSource(sourceId)
+  const source = await resolvePreviewSource(sourceId, ctx)
   // With both stages off the hook commits nothing, so the third column is the
   // source itself rather than a re-encode nobody would ever receive.
   const passthrough = !options.compressResolution && !options.compressBitrate
@@ -925,7 +1007,7 @@ async function previewPayload(settings, sourceId) {
     cap: IMAGE_TOKEN_CAP,
     viewKey,
     passthrough,
-    sample: { width: source.width, height: source.height, bytes: source.bytes },
+    sample: { width: source.width, height: source.height, bytes: source.bytes, source: source.source, url: source.url },
     variants: variants.map((variant, index) => {
       const tokens = estimateTokens(variant.width, variant.height)
       return {
@@ -982,18 +1064,23 @@ function installPreview(ctx, rawConfig) {
           const settings = parsed !== null && typeof parsed === 'object' && parsed.settings !== undefined ? parsed.settings : parsed
           const sourceId = parsed !== null && typeof parsed === 'object' && typeof parsed.sourceId === 'string' ? parsed.sourceId : undefined
           if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('settings must be an object')
-          const key = JSON.stringify({ sourceId: sourceId ?? null, settings })
+          const key = JSON.stringify({ sourceId: sourceId ?? null, settings, sample: previewSample?.url ?? samplePhoto?.url ?? null })
           const cached = previewCache.get(key)
           if (cached !== undefined) {
             previewCache.delete(key)
             previewCache.set(key, cached)
             return previewJson(res, 200, cached)
           }
-          const payload = await previewPayload({ ...rawConfig, ...settings }, sourceId)
+          const payload = await previewPayload({ ...rawConfig, ...settings }, sourceId, ctx)
           previewCache.set(key, payload)
           while (previewCache.size > PREVIEW_CACHE_ENTRIES) previewCache.delete(previewCache.keys().next().value)
           return previewJson(res, 200, payload)
         } catch (error) {
+          if (error instanceof SampleUnavailableError) {
+            const reasons = error.attempts.map((attempt) => `${attempt.source}: ${attempt.reason}`).join('; ')
+            warn(ctx, `preview sample unavailable: ${reasons === '' ? error.message : reasons}`)
+            return previewJson(res, 503, { ok: false, error: 'sample-unavailable' })
+          }
           warn(ctx, `preview failed: ${error instanceof Error ? error.message : String(error)}`)
           return previewJson(res, 500, { ok: false, error: 'preview unavailable' })
         }

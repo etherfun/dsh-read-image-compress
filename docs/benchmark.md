@@ -7,7 +7,7 @@ ms.topic: concept-article
 
 # 压缩基准：压缩率、画质与缓存
 
-2026-10-27，在 DeepSeek Harness（DSH）`0.2.1-rc.3` 上对本机 266 个附件对象实测，插件为 `@local/dsh-read-image-compress`。插件在 `tools/post-execute` 拦截 `read_image` 的结果，用 Sharp 降分辨率、降码率后替换结果内容。以下数据覆盖这条路径的压缩率、画质损失与缓存行为。
+2026-10-27，在 DeepSeek Harness（DSH）`0.2.1-rc.3` 上对本机 266 个附件对象实测，插件为 `dsh-read-image-compress`。插件在 `tools/post-execute` 拦截 `read_image` 的结果，用 Sharp 降分辨率、降码率后替换结果内容。以下数据覆盖这条路径的压缩率、画质损失与缓存行为。
 
 ## 结果摘要
 

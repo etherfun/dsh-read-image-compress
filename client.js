@@ -9,14 +9,14 @@
  */
 
 window.__ModuleLoader__.load({
-  id: '@local/dsh-read-image-compress',
+  id: 'dsh-read-image-compress',
   factory(require) {
     const React = require('react')
     const h = React.createElement
 
     const NS = 'readImageCompress'
     const SETTINGS_NAMESPACE = 'read-image-compress'
-    const BUNDLE = '@local/dsh-read-image-compress'
+    const BUNDLE = 'dsh-read-image-compress'
 
     const DEFAULTS = Object.freeze({
       enabled: true,
@@ -54,8 +54,23 @@ window.__ModuleLoader__.load({
       return `${value.toFixed(digits)} ${units[unit]}`
     }
 
-    /** Three side-by-side renderings of the bundled sample. */
+    /** Three side-by-side renderings of one sample photo. */
     const VARIANT_LABEL_KEYS = { original: 'variantOriginal', native: 'variantNative', plugin: 'variantPlugin' }
+
+    /** Where the sample photo on screen came from, as the label under the picker. */
+    const SAMPLE_SOURCE_KEYS = {
+      local: 'previewSampleLocal',
+      jsdelivr: 'previewSampleGithub',
+      github: 'previewSampleGithub',
+      bing: 'previewSampleBing',
+    }
+
+    /** The picker label: the uploaded file, or the sample and its provenance. */
+    function sourceLabel(t, source, sample) {
+      if (source !== undefined) return `${source.name ?? t('previewUploaded')} · ${source.width}×${source.height}`
+      const key = SAMPLE_SOURCE_KEYS[sample?.source]
+      return key === undefined ? t('previewUsingSample') : `${t('previewUsingSample')} · ${t(key)}`
+    }
 
     /** The DeepSeek cap note: over, at, or none. */
     function tokenNote(variant, cap, t) {
@@ -212,10 +227,14 @@ window.__ModuleLoader__.load({
         previewHint: 'One real photo through three pipelines: as read, as the harness alone delivers it (2048² / 1 MiB), and as this plugin commits it with the settings below.',
         previewLoading: 'Rendering the preview…',
         previewError: 'The preview endpoint is unavailable',
-        previewUsingSample: 'Bundled sample photo',
+        previewUsingSample: 'Sample photo',
+        previewSampleLocal: 'local file',
+        previewSampleGithub: 'GitHub repository',
+        previewSampleBing: 'Bing daily wallpaper',
+        previewSampleUnavailable: 'The sample photo could not be loaded. Upload a photo to preview the settings.',
         previewUploaded: 'Uploaded image',
         previewUploading: 'Uploading…',
-        previewResetSample: 'Use the bundled sample',
+        previewResetSample: 'Use the sample photo',
         previewZoomHint: 'Click to enlarge',
         previewClose: 'Close',
         previewActualSize: '1:1 pixels',
@@ -282,7 +301,11 @@ window.__ModuleLoader__.load({
         previewHint: '同一张真实照片的三种结果：原图、DSH 原生压缩（2048² / 1 MiB），以及本插件按下方设置提交的版本。',
         previewLoading: '正在生成预览…',
         previewError: '预览接口不可用',
-        previewUsingSample: '随包示例照片',
+        previewUsingSample: '示例照片',
+        previewSampleLocal: '本地文件',
+        previewSampleGithub: 'GitHub 仓库',
+        previewSampleBing: 'Bing 每日壁纸',
+        previewSampleUnavailable: '示例照片加载失败，可上传一张照片继续预览。',
         previewUploaded: '已上传的图片',
         previewUploading: '上传中…',
         previewResetSample: '恢复示例图',
@@ -557,9 +580,15 @@ window.__ModuleLoader__.load({
             credentials: 'same-origin',
             signal: controller.signal,
           })
-            .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
-            .then((data) => {
-              if (data?.ok === true) setPreview({ status: 'ready', data })
+            .then((response) => response.json().catch(() => ({})).then((data) => ({ response, data })))
+            .then(({ response, data }) => {
+              if (data?.ok === true) {
+                setPreview({ status: 'ready', data })
+                return
+              }
+              // The host reports why: an unusable sample photo must not read as
+              // an unreachable endpoint, because the fix is to upload a photo.
+              throw new Error(typeof data?.error === 'string' && data.error !== '' ? data.error : `HTTP ${response.status}`)
             })
             .catch((failure) => {
               if (failure?.name !== 'AbortError') setPreview({ status: 'error', data: undefined, detail: failure instanceof Error ? failure.message : 'network error' })
@@ -665,13 +694,12 @@ window.__ModuleLoader__.load({
             disabled: uploadBusy,
             onChange: uploadPreviewSource,
           }),
-          h('span', { style: styles.sourceLabel },
-            source === undefined
-              ? t('previewUsingSample')
-              : `${source.name ?? t('previewUploaded')} · ${source.width}×${source.height}`),
+          h('span', { style: styles.sourceLabel }, sourceLabel(t, source, preview.data?.sample)),
           source === undefined ? null : h('button', { type: 'button', style: styles.secondary, onClick: () => setSource(undefined) }, t('previewResetSample'))),
         preview.status === 'error'
-          ? h('p', { style: styles.error }, preview.detail === undefined ? t('previewError') : `${t('previewError')}（${preview.detail}）`)
+          ? h('p', { style: styles.error }, preview.detail === 'sample-unavailable'
+            ? t('previewSampleUnavailable')
+            : preview.detail === undefined ? t('previewError') : `${t('previewError')}（${preview.detail}）`)
           : preview.data === undefined
             ? h('p', { style: styles.hint }, uploadBusy ? t('previewUploading') : t('previewLoading'))
             : h(PreviewGrid, { t, data: preview.data, onOpen: setZoom }),

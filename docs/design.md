@@ -7,7 +7,7 @@ ms.topic: concept-article
 
 # read_image 结果压缩：设计与实现
 
-`@local/dsh-read-image-compress` 是 DSH 的一个 bundle。宿主侧监听 `tools/post-execute`，在 `read_image` 返回后替换图片引用，用 Sharp 降低分辨率与码率，并在图片下方追加一行对比描述。当前版本 0.15.0，验证环境为 DSH `0.2.1-rc.3`（`D:\SOFT\tools\dsh`）与 `web` profile。
+`dsh-read-image-compress` 是 DSH 的一个 bundle。宿主侧监听 `tools/post-execute`，在 `read_image` 返回后替换图片引用，用 Sharp 降低分辨率与码率，并在图片下方追加一行对比描述。当前版本 0.15.0，验证环境为 DSH `0.2.1-rc.3`（`D:\SOFT\tools\dsh`）与 `web` profile。
 
 插件不改工具实现，也不需要 fork `dsh-tool-fs`。`read_image` 走普通工具管线，替换结果属于官方扩展点。
 
@@ -409,9 +409,11 @@ ctx.effect(() => webServer.register({ kind: 'exact', path: '/api/read-image-comp
 
 ### 示例图与上传
 
-`preview/sample.png` 是随包的一张真实照片（1536×1024）。Host 首次请求时把它 cover 放大到 3200×2000 并 JPEG q92 作为原图，进程内缓存。这样既避免仓库里塞一张大图，又保证三个变体的起点完全一致。
+`preview/sample.png` 是仓库里的一张真实照片，但不进 npm 包。开发目录里直接读本地文件；安装后的副本按 `package.json` 的 `repository` 拼出两条 GitHub 路由（jsDelivr CDN 与 `raw.githubusercontent.com`）并让它们**同时**发起请求，先到的字节胜出，输的那条立刻中止——一条被墙而挂起时不会拖住另一条。两条都不在窗口内响应时改用 Bing 当日壁纸，因此离线或受限网络下，预览仍有一张真实照片，而不是空框。Host 首次取到时把它 cover 到 3200×2000、JPEG q92 作为原图并缓存在进程内；全部来源失败后 60 秒内不再重试，避免每次改设置都等满超时窗口。卡片上方的标签写明当前来源：本地文件、GitHub 仓库或 Bing 每日壁纸。
 
-自定义上传走第二个路由 `POST /api/read-image-compress/source`。它接收原始图片字节，用 Sharp 读元数据校验（`limitInputPixels = 64e6`，body 不超过 16 MiB），返回 `{ id, width, height, bytes }`。上传字节留在内存（最多 4 张，LRU），不落盘；`preview` 请求带 `sourceId` 时用它作为起点，否则用随包示例。卡片上方有文件输入与**恢复示例图**，上传后三列立刻按新图重算。不用浏览器 canvas 的原因与上面一致：编码器不同，数字会对不上真实提交；上传只是换了输入，编码仍然在 Host 的 Sharp 上跑。
+来源选择集中在 `preview-sample.js`。`parseRepository` 兼容 `repository` 的常见写法（`git+https`、`git@…`、`github:owner/repo`、`owner/repo`），`githubSampleRoutes` 生成两条路由，`bingImageUrl` 从 `HPImageArchive` 的响应里取当日壁纸。GitHub 两条路由共享一个 3.5 秒窗口，Bing 另有 6 秒窗口（先查 `zh-CN` 的归档，再查默认市场；壁纸先取 UHD，再退 1920×1080）。`test/preview-sample.test.mjs` 用注入的 fetch 覆盖成功、逐级回退、挂起路由不拖慢胜者、全部失败与窗口耗尽五种路径。
+
+自定义上传走第二个路由 `POST /api/read-image-compress/source`。它接收原始图片字节，用 Sharp 读元数据校验（`limitInputPixels = 64e6`，body 不超过 16 MiB），返回 `{ id, width, height, bytes }`。上传字节留在内存（最多 4 张，LRU），不落盘；`preview` 请求带 `sourceId` 时用它作为起点，否则用示例图。卡片上方有文件输入与**恢复示例图**，上传后三列立刻按新图重算。不用浏览器 canvas 的原因与上面一致：编码器不同，数字会对不上真实提交；上传只是换了输入，编码仍然在 Host 的 Sharp 上跑。示例图不可用时接口返回 `503` 与 `sample-unavailable`，卡片改为提示上传一张照片，而不是把「接口不可用」摆出来。
 
 ### 全屏查看
 
@@ -437,15 +439,16 @@ ctx.effect(() => webServer.register({ kind: 'exact', path: '/api/read-image-comp
 ### 安装步骤
 
 - 包目录：`F:\dev\github\dsh-read-image-compress`
-- bundle 名：`@local/dsh-read-image-compress`（`link:` 依赖）
+- bundle 名：`dsh-read-image-compress`
 
-安装命令：
+安装命令（发布后从 registry 安装，或从工作副本以 `link:` 安装）：
 
 ```powershell
+dsh plugin --profile web add dsh-read-image-compress
 dsh plugin --profile web add "link:F:/dev/github/dsh-read-image-compress"
 ```
 
-该命令把包加入 profile 依赖；因为包声明了 `dsh.bundle.patch`，DSH 同时把它加入 `dsh.profile.bundles`。bundle 自己的 `cordis.patch.yml` 插入唯一一行 `read-image-compress`。
+该命令把包加入 profile 依赖；因为包声明了 `dsh.bundle.patch`，DSH 同时把它加入 `dsh.profile.bundles`。bundle 自己的 `cordis.patch.yml` 插入唯一一行 `read-image-compress`，其 `name` 与包名逐字相同——loader 以 profile 根目录为锚点解析这个名字，包名带 scope 时 `name` 也必须带 scope。
 
 组合校验：`dsh --profile web --dump-config` 中只有 1 个 `- id: read-image-compress`。
 
@@ -477,7 +480,7 @@ bundle patch 加 profile override 后的关键值：两个模式开关都开，`
 ### 回滚步骤
 
 1. 在 **Plugins** 页面取消或移除该 bundle。
-2. 或者从 `~/.dsh/profiles/web/package.json` 的 `dsh.profile.bundles` 与 `dependencies` 中删除 `@local/dsh-read-image-compress`，执行 `dsh plugin --profile web remove @local/dsh-read-image-compress`，再重启或触发一次 profile 重排。
+2. 或者从 `~/.dsh/profiles/web/package.json` 的 `dsh.profile.bundles` 与 `dependencies` 中删除 `dsh-read-image-compress`，执行 `dsh plugin --profile web remove dsh-read-image-compress`，再重启或触发一次 profile 重排。
 3. 采用第 2 种方式时，同时删除 `~/.dsh/profiles/web/cordis.patch.yml` 末尾的 `# read-image-compress: profile override` 段（`- id: read-image-compress`），否则 row 删除后该 override 失去目标。
 
 ## 已知限制

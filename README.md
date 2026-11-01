@@ -1,4 +1,4 @@
-# @local/dsh-read-image-compress
+# dsh-read-image-compress
 
 A DSH bundle that post-processes the built-in `read_image` tool. The host half
 listens on `tools/post-execute`; the browser half adds a configuration page to
@@ -66,8 +66,15 @@ the footer the plugin appends below the gallery:
 
 ### Preview
 
-The settings card renders the plugin's bundled sample photo through three real
-pipelines, side by side, on every draft change (debounced):
+The settings card renders one real photo through three real pipelines, side by
+side, on every draft change (debounced). The photo is not packaged: it is read
+from `preview/sample.png` in a development checkout, and in an installed copy it
+is fetched from the plugin's GitHub repository — jsDelivr and
+`raw.githubusercontent.com` are requested at the same time and the first answer
+wins, so a blocked route never delays the other. When neither responds inside
+the window, Bing's daily wallpaper stands in, so an offline or firewalled host
+still previews a real photograph. The label above the grid names the source in
+use. The three columns are:
 
 | Variant | What it is |
 |---|---|
@@ -93,8 +100,8 @@ the same magnification; Escape closes.
 
 **Bring your own photo.** `POST /api/read-image-compress/source` accepts raw
 image bytes and returns an id; the card then sends that id with each preview
-request. Four uploads stay in memory; the file input and **Use the bundled
-sample** button sit above the grid. Uploads are decoded with a 64 MP ceiling and
+request. Four uploads stay in memory; the file input and **Use the sample photo**
+button sit above the grid. Uploads are decoded with a 64 MP ceiling and
 a 16 MiB body limit.
 
 `summaryMode: off` is called out under the grid; `values` that are mid-edit
@@ -127,8 +134,7 @@ text exactly as the tool reported it.
 
 ## Settings
 
-Open **Plugins** in the sidebar and click the `@local/dsh-read-image-compress`
-bundle. The settings card sits directly under the package description — no
+Open **Plugins** in the sidebar and click the `dsh-read-image-compress` bundle. The settings card sits directly under the package description — no
 second-level **Configure** page — and saves as one atomic mutation; the next
 `read_image` call uses the new values. The same fields are valid in
 `cordis.patch.yml`:
@@ -214,10 +220,13 @@ plugin on the next `read_image` call without a reload.
 ```text
 index.js            host half: tools/post-execute hook, Sharp encoder, footer
 client.js           browser half: bundle-page settings card (plugins.bundle.config)
+preview-sample.js   where the preview photo comes from: local file, GitHub, Bing
 cordis.patch.yml    bundle insert row and default config
 locale/{en,zh}.json bundle metadata strings
-preview/sample.png  the real photo behind the settings preview
-                    (uploads are in-memory only, never written)
+preview/sample.png  the photo behind the settings preview, kept in the repository
+                    and fetched at runtime (not shipped in the tarball;
+                    uploads are in-memory only, never written)
+test/               node:test coverage for the sample-source routes
 docs/design.md      architecture, contracts, and the hook rationale
 docs/benchmark.md   measured compression ratio, quality loss, and cache results
 docs/toc.yml        table of contents for the docs set
@@ -232,6 +241,14 @@ H1 matching the title, heading levels, table shape, language-tagged code fences,
 link targets, `toc.yml` entries, and the wording that Microsoft style avoids.
 
 ## Install in this profile
+
+From the registry, as any other plugin:
+
+```powershell
+dsh plugin --profile web add dsh-read-image-compress
+```
+
+From a working copy, linked so every edit is live without reinstalling:
 
 ```powershell
 dsh plugin --profile web add "link:F:\dev\github\dsh-read-image-compress"
